@@ -1,0 +1,12 @@
+[package]
+name = "voxel_game"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+vec_mem_heap = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+derive-new = "0.7"
+glam = "0.30"
+macroquad = "0.4"
