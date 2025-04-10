@@ -7,6 +7,9 @@ uniform float u_time; // Time from main program
 uniform vec3 u_camera_position; // Camera position from main program
 uniform vec3 u_camera_direction; // Camera direction from main program
 
+// Maximum view distance - increase this to see further
+const float MAX_VIEW_DISTANCE = 50.0;
+
 // Ray structure
 struct Ray {
     vec3 origin;
@@ -32,6 +35,25 @@ float intersectSphere(Ray ray, Sphere sphere) {
     } else {
         return (-b - sqrt(discriminant)) / (2.0 * a); // Return nearest intersection distance
     }
+}
+
+// Ray-floor intersection function
+float intersectFloor(Ray ray) {
+    // Define floor as a plane with normal pointing up
+    vec3 floorPoint = vec3(0.0, 2.0, 0.0);
+    vec3 floorNormal = vec3(0.0, -1.0, 0.0); // Normal pointing up
+    
+    // Check if ray is parallel to the floor (or nearly so)
+    float denominator = dot(ray.direction, floorNormal);
+    if (abs(denominator) < 0.0001) {
+        return -1.0; // No intersection (ray is parallel to floor)
+    }
+    
+    // Calculate intersection distance
+    float t = dot(floorPoint - ray.origin, floorNormal) / denominator;
+    
+    // Only return positive intersections (in front of the ray origin)
+    return t > 0.0 ? t : -1.0;
 }
 
 // Generate a ray from camera through pixel
@@ -81,33 +103,62 @@ void main() {
     // Check for intersection with both spheres
     float t1 = intersectSphere(ray, sphere);
     float t2 = intersectSphere(ray, sphere2);
+    float t3 = intersectFloor(ray);
     
     // Determine which sphere is closer (if any)
     float t = -1.0;
     bool isSphere1 = false;
+    bool isSphere2 = false;
+    bool isFloor = false;
     
-    if (t1 > 0.0 && (t2 <= 0.0 || t1 < t2)) {
+    // Find the closest intersection within our maximum view distance
+    float minT = MAX_VIEW_DISTANCE;
+    
+    if (t1 > 0.0 && t1 < minT) {
+        minT = t1;
         t = t1;
         isSphere1 = true;
-    } else if (t2 > 0.0) {
+        isSphere2 = isFloor = false;
+    }
+    
+    if (t2 > 0.0 && t2 < minT) {
+        minT = t2;
         t = t2;
-        isSphere1 = false;
+        isSphere2 = true;
+        isSphere1 = isFloor = false;
+    }
+    
+    if (t3 > 0.0 && t3 < minT) {
+        minT = t3;
+        t = t3;
+        isFloor = true;
+        isSphere1 = isSphere2 = false;
     }
     
     if (t > 0.0) {
         // Calculate hit point
         vec3 hitPoint = ray.origin + ray.direction * t;
-        
         // Calculate normal at hit point and color based on which sphere was hit
         vec3 normal;
-        vec3 sphereColor;
+        vec3 color;
         
-        if (isSphere1) {
+        if (isFloor) {
+            normal = vec3(0.0, 1.0, 0.0);
+            // Create a checkerboard pattern for the floor
+            float checkSize = 1.0;
+            bool isEvenX = mod(floor(hitPoint.x / checkSize), 2.0) < 1.0;
+            bool isEvenZ = mod(floor(hitPoint.z / checkSize), 2.0) < 1.0;
+            if (isEvenX == isEvenZ) {
+                color = vec3(0.1, 0.1, 0.1); // Dark gray
+            } else {
+                color = vec3(0.5, 0.5, 0.5); // Light gray
+            }
+        } else if (isSphere1) {
             normal = normalize(hitPoint - sphere.center);
-            sphereColor = vec3(1.0, 0.2, 0.2); // Red for first sphere
-        } else {
+            color = vec3(1.0, 0.2, 0.2); // Red for first sphere
+        } else if (isSphere2) {
             normal = normalize(hitPoint - sphere2.center);
-            sphereColor = vec3(0.2, 1.0, 0.2); // Green for second sphere
+            color = vec3(0.2, 1.0, 0.2); // Green for second sphere
         }
         
         // Simple lighting - direction to light
@@ -115,17 +166,19 @@ void main() {
         
         // Diffuse lighting
         float diff = max(dot(normal, lightDir), 0.0);
-        vec3 diffuse = sphereColor * diff;
+        vec3 diffuse = color * diff;
         
         // Add ambient light
         vec3 ambient = vec3(0.1, 0.1, 0.1);
         
         // Final color
-        vec3 color = ambient + diffuse;
-        gl_FragColor = vec4(color, 1.0);
+        vec3 finalColor = ambient + diffuse;
+        gl_FragColor = vec4(finalColor, 1.0);
     } else {
-        // Background color (blue gradient based on y coordinate)
-        vec3 backgroundColor = vec3(0.1, 0.2, 0.8) * (1.0 - uv.y * 0.5);
-        gl_FragColor = vec4(backgroundColor, 1.0);
+        // Background color with distance fog effect
+        // Calculate sky color based on ray direction
+        float skyBlend = pow(max(0.0, ray.direction.y + 0.1), 0.5);
+        vec3 skyColor = mix(vec3(0.5, 0.7, 1.0), vec3(0.2, 0.4, 0.8), skyBlend);
+        gl_FragColor = vec4(skyColor, 1.0);
     }
 }
