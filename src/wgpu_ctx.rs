@@ -1,24 +1,99 @@
 use std::sync::Arc;
 use wgpu::{util::DeviceExt, MemoryHints::Performance, PipelineCompilationOptions, Trace};
 use winit::window::Window;
-use glam::Mat4;
+use glam::{Mat4, Vec3};
+use crate::camera::Camera;
 
+// Data required to create buffers for full screen quad
+const FULL_SCREEN_INDICIES: [u16; 6] = [0, 1, 2, 0, 2, 3];
+const VERTICES : [Vertex; 4] = [
+    Vertex { position: [-1.0, -1.0, 0.0], tex_coords: [0.0, 0.0] },
+    Vertex { position: [1.0, -1.0, 0.0], tex_coords: [1.0, 0.0] },
+    Vertex { position: [1.0, 1.0, 0.0], tex_coords: [1.0, 1.0] },
+    Vertex { position: [-1.0, 1.0, 0.0], tex_coords: [0.0, 1.0] },
+];
 #[repr(C, align(16))]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Uniforms {
+struct Data {
     model: [[f32; 4]; 4],
     projection: [[f32; 4]; 4],
     resolution: [f32; 2],
-    mouse_position: [f32; 2],
+    padding1: [f32; 2],
+    camera_pos: [f32; 3],
+    padding2: f32,
+    camera_dir: [f32; 3],
+    padding3: f32,
+    // Using vec4 alignment for uniform buffer requirements
+    voxels: [[u32; 4]; (8 * 8 * 8) / 4]
 }
-impl Uniforms {
-    fn new(projection: Mat4, resolution: [f32; 2], mouse_position: [f32; 2]) -> Self {
+impl Data {
+    fn new(projection: Mat4, resolution: [f32; 2], voxels: VoxelWorld) -> Self {
+        let mut aligned_voxels = [[0u32; 4]; (8 * 8 * 8) / 4];
+        
+        // Convert flat array to vec4 aligned array
+        for i in 0..voxels.voxels.len() {
+            let vec_index = i / 4;
+            let component_index = i % 4;
+            aligned_voxels[vec_index][component_index] = voxels.voxels[i];
+        }
+        
         Self {
             model: Mat4::IDENTITY.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
             resolution,
-            mouse_position,
+            padding1: [0.0, 0.0],
+            camera_pos: [4.0, 4.0, 12.0], // Default camera position
+            padding2: 0.0,
+            camera_dir: [4.0, 4.0, 0.0],  // Default look at center of voxel grid
+            padding3: 0.0,
+            voxels: aligned_voxels
         }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VoxelWorld {
+    // 8 ^ 3 world
+    voxels: [u32; 8 * 8 * 8]
+}
+impl Default for VoxelWorld {
+    fn default() -> Self {
+        let mut world = Self {
+            voxels: [0; 8 * 8 * 8]
+        };
+        
+        // Create a small structure in the center
+        for x in 3..6 {
+            for y in 3..6 {
+                for z in 3..6 {
+                    // Make a hollow cube
+                    if x == 3 || x == 5 || y == 3 || y == 5 || z == 3 || z == 5 {
+                        world.set_voxel(x, y, z, true);
+                    }
+                }
+            }
+        }
+        
+        // Add a floor
+        for x in 1..7 {
+            for z in 1..7 {
+                world.set_voxel(x, 1, z, true);
+            }
+        }
+        
+        // Add a pillar
+        for y in 1..4 {
+            world.set_voxel(1, y, 1, true);
+        }
+        
+        world
+    }
+}
+impl VoxelWorld {
+    fn set_voxel(&mut self, x: u8, y: u8, z: u8, filled:bool) {
+        let voxel = if filled { u32::MAX } else { 0 };
+        self.voxels[x as usize * 8 * 8 + y as usize * 8 + z as usize] = voxel;
     }
 }
 
@@ -52,21 +127,59 @@ impl Vertex {
 pub struct WgpuCtx<'window> {
     surface: wgpu::Surface<'window>,
     surface_config: wgpu::SurfaceConfiguration,
+    // We don't need to bind this, but it does need to be constructed.
     // adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    num_indices: u32,
-    uniform_buffer: wgpu::Buffer,
-    uniform_bind_group: wgpu::BindGroup,
-    mouse_position: [f32; 2],
+
+    data_buffer: wgpu::Buffer,
+    data_bind_group: wgpu::BindGroup,
+
+    voxel_world: VoxelWorld,
+    camera: Camera,
 }
 impl<'window> WgpuCtx<'window> {
-    pub async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
-        let mouse_position = [0.5, 0.5]; // Default to center of screen
-
+    // Camera control methods
+    pub fn camera(&self) -> &Camera {
+        &self.camera
+    }
+    
+    pub fn camera_mut(&mut self) -> &mut Camera {
+        &mut self.camera
+    }
+    
+    pub fn camera_position(&self) -> [f32; 3] {
+        self.camera.position_array()
+    }
+    
+    pub fn set_camera_position(&mut self, position: [f32; 3]) {
+        self.camera.set_position_array(position);
+    }
+    
+    pub fn camera_direction(&self) -> [f32; 3] {
+        self.camera.target_position_array()
+    }
+    
+    pub fn set_camera_direction(&mut self, target: [f32; 3]) {
+        // This is a bit of a hack since we're given a target point, not a direction
+        // We need to compute the direction from position to target
+        let position = self.camera.position();
+        let target = Vec3::from_array(target);
+        let direction = (target - position).normalize();
+        
+        // Compute yaw and pitch from the direction vector
+        let pitch = direction.y.asin().to_degrees();
+        let yaw = direction.z.atan2(direction.x).to_degrees();
+        
+        // Update camera orientation
+        self.camera.rotate(yaw - self.camera.yaw(), pitch - self.camera.pitch());
+    }
+}
+impl<'window> WgpuCtx<'window> {
+    pub async fn new_async(window: Arc<Window>, voxel_world: VoxelWorld) -> WgpuCtx<'window> {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
         let adapter = instance
@@ -105,54 +218,48 @@ impl<'window> WgpuCtx<'window> {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
-        
-        // Create a full-screen quad
-        let vertices = [
-            Vertex { position: [-1.0, -1.0, 0.0], tex_coords: [0.0, 0.0] },
-            Vertex { position: [1.0, -1.0, 0.0], tex_coords: [1.0, 0.0] },
-            Vertex { position: [1.0, 1.0, 0.0], tex_coords: [1.0, 1.0] },
-            Vertex { position: [-1.0, 1.0, 0.0], tex_coords: [0.0, 1.0] },
-        ];
-        
-        let indices = [0u16, 1, 2, 0, 2, 3];
-        
         let vertex_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&vertices),
+                contents: bytemuck::cast_slice(&VERTICES),
                 usage: wgpu::BufferUsages::VERTEX,
             }
         );
-        
         let index_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(&indices),
+                contents: bytemuck::cast_slice(&FULL_SCREEN_INDICIES),
                 usage: wgpu::BufferUsages::INDEX,
             }
         );
         
-        // Create uniform buffer and bind group layout
-        let uniform_buffer = device.create_buffer_init(
+        // Create data buffer and bind group layout
+        let data_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("Uniform Buffer"),
-                contents: bytemuck::cast_slice(&[Uniforms::new(
+                label: Some("Data Buffer"),
+                contents: bytemuck::cast_slice(&[Data::new(
                     Mat4::IDENTITY,
                     [width as f32, height as f32],
-                    mouse_position
+                    voxel_world
                 )]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             }
         );
         
+        // Creates a blueprint
         let bind_group_layout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
+                        // Basically an id
                         binding: 0,
+                        // Visible to both Vertex and Fragment shaders
                         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        // Type of binding
                         ty: wgpu::BindingType::Buffer {
+                            // Uniform: All Data is the same type
                             ty: wgpu::BufferBindingType::Uniform,
+                            // Is fixed length
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -163,20 +270,22 @@ impl<'window> WgpuCtx<'window> {
             }
         );
         
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        // Creates a bind group following above blueprint
+        let data_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
+                    resource: data_buffer.as_entire_binding(),
                 },
             ],
-            label: Some("uniform_bind_group"),
+            label: Some("data_bind_group"),
         });
         
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout], // Include the uniform bind group layout
+            // Include the uniform bind group layout
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
         
@@ -229,70 +338,73 @@ impl<'window> WgpuCtx<'window> {
             cache: None,
         });
         
+        // Create camera with proper aspect ratio
+        let mut camera = Camera::default();
+        camera.set_aspect_ratio(width as f32 / height as f32);
+        
         WgpuCtx {
             surface,
             surface_config,
-            // adapter,
             device,
             queue,
             render_pipeline,
             vertex_buffer,
             index_buffer,
-            num_indices: indices.len() as u32,
-            uniform_buffer,
-            uniform_bind_group,
-            mouse_position,
+            data_buffer,
+            data_bind_group,
+            voxel_world,
+            camera,
         }
     }
 
-    pub fn new(window: Arc<Window>) -> WgpuCtx<'window> {
-        pollster::block_on(WgpuCtx::new_async(window))
+    pub fn new(window: Arc<Window>, voxel_world: VoxelWorld) -> WgpuCtx<'window> {
+        pollster::block_on(WgpuCtx::new_async(window, voxel_world))
     }
 
+    // REMEMBER TO UPDATE THIS IF WE MOVE RESOLUTION FIELD
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let (width, height) = new_size;
         self.surface_config.width = width.max(1);
         self.surface_config.height = height.max(1);
         self.surface.configure(&self.device, &self.surface_config);
         
-        // Update the resolution in the uniform buffer
+        // Update the resolution in the data buffer
         self.queue.write_buffer(
-            &self.uniform_buffer,
-            std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2, // Offset to resolution field
+            &self.data_buffer,
+            // Offset to resolution field, it's after 2 64 byte fields
+            std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2,
             bytemuck::cast_slice(&[width as f32, height as f32]),
         );
     }
 
-    pub fn update_mouse_position(&mut self, position: [f32; 2]) {
-        self.mouse_position = position;
-    }
-    
     pub fn draw(&mut self) {
-        // Create projection matrix
-        let aspect_ratio = self.surface_config.width as f32 / self.surface_config.height as f32;
-        let proj = Mat4::perspective_rh_gl(60.0_f32.to_radians(), aspect_ratio, 0.1, 100.0);
+        // Get projection matrix from camera
+        let proj = self.camera.projection_matrix();
         
-        // Update uniform buffer with new values
-        let uniforms = Uniforms::new(
+        // Update data buffer with new values
+        let mut data = Data::new(
             proj,
             [self.surface_config.width as f32, self.surface_config.height as f32],
-            self.mouse_position
+            self.voxel_world
         );
         
-        self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        // Update camera position and direction in the data struct
+        data.camera_pos = self.camera.position_array();
+        data.camera_dir = self.camera.forward_array();
         
-        // Render frame
-        let surface_texture = self
-            .surface
-            .get_current_texture()
+        self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
+        
+        let surface_texture = self.surface.get_current_texture()
             .expect("Failed to acquire next swap chain texture");
-        let texture_view = surface_texture
-            .texture
+        let texture_view = surface_texture.texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
+        
+        // Create a command
+        let mut encoder = self.device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        // Fill instructions
         {
+            // Couldn't tell ya
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -313,13 +425,14 @@ impl<'window> WgpuCtx<'window> {
                 occlusion_query_set: None,
             });
             
+            // Tells GPU to use this pipeline
             render_pass.set_pipeline(&self.render_pipeline);
-            // Set the uniform bind group
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+
+            // Says we'll be using this bind group
+            render_pass.set_bind_group(0, &self.data_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            // Use indexed drawing with the correct number of indices
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            render_pass.draw_indexed(0..6, 0, 0..1);
         }
         
         self.queue.submit(Some(encoder.finish()));
