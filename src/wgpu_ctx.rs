@@ -2,7 +2,6 @@ use std::sync::Arc;
 use wgpu::{util::DeviceExt, MemoryHints::Performance, PipelineCompilationOptions, Trace};
 use winit::window::Window;
 use glam::Mat4;
-use std::time::Instant;
 
 #[repr(C, align(16))]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -11,9 +10,16 @@ struct Uniforms {
     projection: [[f32; 4]; 4],
     resolution: [f32; 2],
     mouse_position: [f32; 2],
-    cell_steps: f32, // Number of steps from mouse position to color cells
-    time: f32,
-    _padding: [f32; 2], // Add padding to ensure 16-byte alignment
+}
+impl Uniforms {
+    fn new(projection: Mat4, resolution: [f32; 2], mouse_position: [f32; 2]) -> Self {
+        Self {
+            model: Mat4::IDENTITY.to_cols_array_2d(),
+            projection: projection.to_cols_array_2d(),
+            resolution,
+            mouse_position,
+        }
+    }
 }
 
 #[repr(C)]
@@ -22,7 +28,6 @@ struct Vertex {
     position: [f32; 3],
     tex_coords: [f32; 2],
 }
-
 impl Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -57,15 +62,10 @@ pub struct WgpuCtx<'window> {
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
     mouse_position: [f32; 2],
-    cell_steps: f32,
-    start_time: Instant,
 }
-
 impl<'window> WgpuCtx<'window> {
     pub async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
         let mouse_position = [0.5, 0.5]; // Default to center of screen
-        let cell_steps = 5.0; // Default number of steps from mouse position
-        let start_time = Instant::now();
 
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
@@ -136,15 +136,11 @@ impl<'window> WgpuCtx<'window> {
         let uniform_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Uniform Buffer"),
-                contents: bytemuck::cast_slice(&[Uniforms {
-                    model: Mat4::IDENTITY.to_cols_array_2d(),
-                    projection: Mat4::IDENTITY.to_cols_array_2d(),
-                    resolution: [width as f32, height as f32],
-                    mouse_position,
-                    cell_steps,
-                    time: start_time.elapsed().as_secs_f32(),
-                    _padding: [0.0, 0.0],
-                }]),
+                contents: bytemuck::cast_slice(&[Uniforms::new(
+                    Mat4::IDENTITY,
+                    [width as f32, height as f32],
+                    mouse_position
+                )]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             }
         );
@@ -246,8 +242,6 @@ impl<'window> WgpuCtx<'window> {
             uniform_buffer,
             uniform_bind_group,
             mouse_position,
-            cell_steps,
-            start_time,
         }
     }
 
@@ -273,25 +267,17 @@ impl<'window> WgpuCtx<'window> {
         self.mouse_position = position;
     }
     
-    pub fn update_cell_steps(&mut self, steps: f32) {
-        self.cell_steps = steps;
-    }
-    
     pub fn draw(&mut self) {
         // Create projection matrix
         let aspect_ratio = self.surface_config.width as f32 / self.surface_config.height as f32;
         let proj = Mat4::perspective_rh_gl(60.0_f32.to_radians(), aspect_ratio, 0.1, 100.0);
         
         // Update uniform buffer with new values
-        let uniforms = Uniforms {
-            model: Mat4::IDENTITY.to_cols_array_2d(),
-            projection: proj.to_cols_array_2d(),
-            resolution: [self.surface_config.width as f32, self.surface_config.height as f32],
-            mouse_position: self.mouse_position,
-            cell_steps: self.cell_steps,
-            time: self.start_time.elapsed().as_secs_f32(),
-            _padding: [0.0, 0.0],
-        };
+        let uniforms = Uniforms::new(
+            proj,
+            [self.surface_config.width as f32, self.surface_config.height as f32],
+            self.mouse_position
+        );
         
         self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         
@@ -340,3 +326,4 @@ impl<'window> WgpuCtx<'window> {
         surface_texture.present();
     }
 }
+

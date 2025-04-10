@@ -1,12 +1,8 @@
-// Uniform buffer containing various parameters
 struct Uniforms {
     model: mat4x4<f32>,
     projection: mat4x4<f32>,
     resolution: vec2<f32>,
     mouse_position: vec2<f32>,
-    cell_steps: f32,
-    time: f32,
-    _padding: vec2<f32>,
 }
 
 @group(0) @binding(0)
@@ -17,12 +13,10 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) texcoord: vec2<f32>,
 };
-
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) texcoord: vec2<f32>,
 };
-
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
@@ -63,7 +57,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // Create a color based on the Manhattan distance
     // Use modulo to create a repeating pattern
-    let max_steps = uniforms.cell_steps;
+    let max_steps = 5.0;
     let normalized_dist = dist / max_steps;
     let step_value = dist % max_steps;
     
