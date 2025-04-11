@@ -6,14 +6,18 @@ struct Data {
     camera_pos: vec3<f32>,
     padding2: f32,
     camera_dir: vec3<f32>,
-    padding3: f32,
-    // Each element in the array needs to be aligned to 16 bytes
-    // We'll use array<vec4<u32>> instead of array<u32> to ensure proper alignment
-    voxels: array<vec4<u32>, (8 * 8 * 8) / 4>,
+    voxel_count: f32,
 }
 
 @group(0) @binding(0)
 var<uniform> data: Data;
+
+// Define the structure that matches BasicNode3d in Rust
+struct VoxelNode {
+    children: array<u32, 8>
+}
+@group(0) @binding(1)
+var<storage> voxels: array<VoxelNode>;
 
 // Vertex shader
 struct VertexInput {
@@ -32,6 +36,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+/*
 // Ray hit information
 struct RayHit {
     hit: bool,
@@ -262,7 +267,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv = vec2<f32>(in.texcoord.x * 2.0 - 1.0, in.texcoord.y * 2.0 - 1.0)
            * vec2<f32>(aspect, 1.0);
     
-    let a = vec2<u64>(0, 0);
     let camera_pos = data.camera_pos;
     let forward = data.camera_dir;
     let up = vec3<f32>(0.0, 1.0, 0.0);
@@ -328,3 +332,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0,0.0,0.0,0.0);//vec4<f32>(0.5 + sky_t * 0.2, 0.7 + sky_t * 0.1, 1.0, 1.0);
     }
 }
+*/
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0,0.0,0.0,0.0);
+}
+
+

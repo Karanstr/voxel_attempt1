@@ -103,10 +103,14 @@ impl<'window> WgpuCtx<'window> {
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                // Request the storage buffer feature
+                required_features: wgpu::Features::VERTEX_WRITABLE_STORAGE | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,
                 // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
+                required_limits: wgpu::Limits {
+                    max_storage_buffers_per_shader_stage: 8,
+                    max_storage_buffer_binding_size: 1024 * 1024, // 1MB should be more than enough
+                    ..wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+                },
                 memory_hints: Performance,
                 trace: Trace::Off,
             },
