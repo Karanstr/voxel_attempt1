@@ -27,9 +27,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    // Pass through position as is (already in NDC space)
     out.position = vec4<f32>(in.position.x, in.position.y, 0.0, 1.0);
-    // Pass texture coordinates to fragment shader
     out.texcoord = in.texcoord;
     return out;
 }
@@ -77,6 +75,14 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
     result.normal = vec3<f32>(0.0, 0.0, 0.0);
     result.position = vec3<f32>(0.0, 0.0, 0.0);
     result.voxel_value = 0u;
+    
+    // Check if camera is inside the grid bounds
+    let is_inside_grid = origin.x >= 0.0 && origin.x < 8.0 &&
+                         origin.y >= 0.0 && origin.y < 8.0 &&
+                         origin.z >= 0.0 && origin.z < 8.0;
+    
+    // Get the voxel position of the camera
+    let camera_voxel = vec3<i32>(floor(origin));
     
     // Grid dimensions
     let grid_size = vec3<f32>(8.0, 8.0, 8.0);
@@ -220,16 +226,23 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
             voxel_pos.y >= 0 && voxel_pos.y < 8 && 
             voxel_pos.z >= 0 && voxel_pos.z < 8) {
             
-            let voxel_value = get_voxel(voxel_pos);
-            if (voxel_value > 0u) {
-                // We hit a voxel
-                result.hit = true;
-                result.position = pos;
-                result.t = t;
-                result.voxel_value = voxel_value;
-                result.normal = hit_face; // Use the float-based normal directly
+            // Skip the voxel that contains the camera position
+            if (!is_inside_grid || 
+                voxel_pos.x != camera_voxel.x || 
+                voxel_pos.y != camera_voxel.y || 
+                voxel_pos.z != camera_voxel.z) {
                 
-                return result;
+                let voxel_value = get_voxel(voxel_pos);
+                if (voxel_value > 0u) {
+                    // We hit a voxel
+                    result.hit = true;
+                    result.position = pos;
+                    result.t = t;
+                    result.voxel_value = voxel_value;
+                    result.normal = hit_face; // Use the float-based normal directly
+                    
+                    return result;
+                }
             }
         } else {
             // We've left the grid bounds
@@ -281,20 +294,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         in.texcoord.y * 2.0 - 1.0
     );
     
-    // Camera setup - position outside the grid looking at center
-    // Position camera to see multiple faces of the voxel grid
     let camera_pos = data.camera_pos;
-    let forward = normalize(data.camera_dir); // Use camera_dir directly as the forward vector
+    let forward = data.camera_dir;
     let up = vec3<f32>(0.0, 1.0, 0.0);
     
     // Create camera basis vectors
     let right = normalize(cross(forward, up));
     let camera_up = normalize(cross(right, forward));
     
-    // Create ray direction with proper perspective projection
     let fov_rad = 0.8; // Field of view in radians (approximately 45 degrees)
     
-    // This creates a proper perspective projection without radial distortion
     // The ray direction is calculated as a linear combination of the basis vectors
     // scaled by the tangent of the field of view angle
     let ray_dir = normalize(forward + right * uv.x * tan(fov_rad) + camera_up * uv.y * tan(fov_rad));

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use wgpu::{util::DeviceExt, MemoryHints::Performance, PipelineCompilationOptions, Trace};
 use winit::window::Window;
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use crate::camera::Camera;
 
 // Data required to create buffers for full screen quad
@@ -139,45 +139,8 @@ pub struct WgpuCtx<'window> {
     data_bind_group: wgpu::BindGroup,
 
     voxel_world: VoxelWorld,
-    camera: Camera,
 }
-impl<'window> WgpuCtx<'window> {
-    // Camera control methods
-    pub fn camera(&self) -> &Camera {
-        &self.camera
-    }
-    
-    pub fn camera_mut(&mut self) -> &mut Camera {
-        &mut self.camera
-    }
-    
-    pub fn camera_position(&self) -> [f32; 3] {
-        self.camera.position_array()
-    }
-    
-    pub fn set_camera_position(&mut self, position: [f32; 3]) {
-        self.camera.set_position_array(position);
-    }
-    
-    pub fn camera_direction(&self) -> [f32; 3] {
-        self.camera.target_position_array()
-    }
-    
-    pub fn set_camera_direction(&mut self, target: [f32; 3]) {
-        // This is a bit of a hack since we're given a target point, not a direction
-        // We need to compute the direction from position to target
-        let position = self.camera.position();
-        let target = Vec3::from_array(target);
-        let direction = (target - position).normalize();
-        
-        // Compute yaw and pitch from the direction vector
-        let pitch = direction.y.asin().to_degrees();
-        let yaw = direction.z.atan2(direction.x).to_degrees();
-        
-        // Update camera orientation
-        self.camera.rotate(yaw - self.camera.yaw(), pitch - self.camera.pitch());
-    }
-}
+
 impl<'window> WgpuCtx<'window> {
     pub async fn new_async(window: Arc<Window>, voxel_world: VoxelWorld) -> WgpuCtx<'window> {
         let instance = wgpu::Instance::default();
@@ -192,20 +155,17 @@ impl<'window> WgpuCtx<'window> {
             .await
             .expect("Failed to find an appropriate adapter");
         // Create the logical device and command queue
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::empty(),
-                    // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
-                    memory_hints: Performance,
-                    trace: Trace::Off,
-                },
-            )
-            .await
-            .expect("Failed to create device");
+        let (device, queue) = adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                memory_hints: Performance,
+                trace: Trace::Off,
+            },
+        ).await.expect("Failed to create device");
 
         let size = window.inner_size();
         let width = size.width.max(1);
@@ -338,10 +298,6 @@ impl<'window> WgpuCtx<'window> {
             cache: None,
         });
         
-        // Create camera with proper aspect ratio
-        let mut camera = Camera::default();
-        camera.set_aspect_ratio(width as f32 / height as f32);
-        
         WgpuCtx {
             surface,
             surface_config,
@@ -353,7 +309,6 @@ impl<'window> WgpuCtx<'window> {
             data_buffer,
             data_bind_group,
             voxel_world,
-            camera,
         }
     }
 
@@ -377,9 +332,9 @@ impl<'window> WgpuCtx<'window> {
         );
     }
 
-    pub fn draw(&mut self) {
+    pub fn draw(&mut self, camera: &Camera) {
         // Get projection matrix from camera
-        let proj = self.camera.projection_matrix();
+        let proj = camera.projection_matrix();
         
         // Update data buffer with new values
         let mut data = Data::new(
@@ -389,8 +344,8 @@ impl<'window> WgpuCtx<'window> {
         );
         
         // Update camera position and direction in the data struct
-        data.camera_pos = self.camera.position_array();
-        data.camera_dir = self.camera.forward_array();
+        data.camera_pos = camera.position_array();
+        data.camera_dir = camera.forward_array();
         
         self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
         
