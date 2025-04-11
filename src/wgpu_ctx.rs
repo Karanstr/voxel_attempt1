@@ -3,6 +3,8 @@ use wgpu::{util::DeviceExt, MemoryHints::Performance, PipelineCompilationOptions
 use winit::window::Window;
 use glam::Mat4;
 use crate::camera::Camera;
+use crate::graph::basic_node3d::BasicNode3d;
+use crate::graph::sdg::*;
 
 // Data required to create buffers for full screen quad
 const FULL_SCREEN_INDICIES: [u16; 6] = [0, 1, 2, 0, 2, 3];
@@ -22,78 +24,20 @@ struct Data {
     camera_pos: [f32; 3],
     padding2: f32,
     camera_dir: [f32; 3],
-    padding3: f32,
-    // Using vec4 alignment for uniform buffer requirements
-    voxels: [[u32; 4]; (8 * 8 * 8) / 4]
+    voxel_count: u32,
 }
 impl Data {
-    fn new(projection: Mat4, resolution: [f32; 2], voxels: VoxelWorld) -> Self {
-        let mut aligned_voxels = [[0u32; 4]; (8 * 8 * 8) / 4];
-        
-        // Convert flat array to vec4 aligned array
-        for i in 0..voxels.voxels.len() {
-            let vec_index = i / 4;
-            let component_index = i % 4;
-            aligned_voxels[vec_index][component_index] = voxels.voxels[i];
-        }
-        
+    fn new(projection: Mat4, resolution: [f32; 2], voxel_count: u32) -> Self {
         Self {
             model: Mat4::IDENTITY.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
             resolution,
             padding1: [0.0, 0.0],
-            camera_pos: [4.0, 4.0, 12.0], // Default camera position
+            camera_pos: [4.0, 4.0, 12.0],
             padding2: 0.0,
-            camera_dir: [4.0, 4.0, 0.0],  // Default look at center of voxel grid
-            padding3: 0.0,
-            voxels: aligned_voxels
+            camera_dir: [4.0, 4.0, 0.0],
+            voxel_count,
         }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct VoxelWorld {
-    // 8 ^ 3 world
-    voxels: [u32; 8 * 8 * 8]
-}
-impl Default for VoxelWorld {
-    fn default() -> Self {
-        let mut world = Self {
-            voxels: [0; 8 * 8 * 8]
-        };
-        
-        // Create a small structure in the center
-        for x in 3..6 {
-            for y in 3..6 {
-                for z in 3..6 {
-                    // Make a hollow cube
-                    if x == 3 || x == 5 || y == 3 || y == 5 || z == 3 || z == 5 {
-                        world.set_voxel(x, y, z, true);
-                    }
-                }
-            }
-        }
-        
-        // Add a floor
-        for x in 1..7 {
-            for z in 1..7 {
-                world.set_voxel(x, 1, z, true);
-            }
-        }
-        
-        // Add a pillar
-        for y in 1..4 {
-            world.set_voxel(1, y, 1, true);
-        }
-        
-        world
-    }
-}
-impl VoxelWorld {
-    fn set_voxel(&mut self, x: u8, y: u8, z: u8, filled:bool) {
-        let voxel = if filled { u32::MAX } else { 0 };
-        self.voxels[x as usize * 8 * 8 + y as usize * 8 + z as usize] = voxel;
     }
 }
 
@@ -136,13 +80,14 @@ pub struct WgpuCtx<'window> {
     index_buffer: wgpu::Buffer,
 
     data_buffer: wgpu::Buffer,
+    voxel_buffer: wgpu::Buffer,
     data_bind_group: wgpu::BindGroup,
 
-    voxel_world: VoxelWorld,
+    sdg: SparseDirectedGraph<BasicNode3d>,
 }
 
 impl<'window> WgpuCtx<'window> {
-    pub async fn new_async(window: Arc<Window>, voxel_world: VoxelWorld) -> WgpuCtx<'window> {
+    pub async fn new_async(window: Arc<Window>, sdg: SparseDirectedGraph<BasicNode3d>) -> WgpuCtx<'window> {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
         let adapter = instance
@@ -193,16 +138,26 @@ impl<'window> WgpuCtx<'window> {
             }
         );
         
-        // Create data buffer and bind group layout
+        // Create uniform buffer for camera and scene data
         let data_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Data Buffer"),
                 contents: bytemuck::cast_slice(&[Data::new(
                     Mat4::IDENTITY,
                     [width as f32, height as f32],
-                    voxel_world
+                    sdg.nodes.data().len() as u32
                 )]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }
+        );
+        
+        // Create storage buffer for voxel data
+        let voxels:Vec<BasicNode3d> = sdg.nodes.data().iter().map(|x| x.clone().unwrap_or(BasicNode3d::new(&[u32::MAX; 8]))).collect();
+        let voxel_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Voxel Storage Buffer"),
+                contents: bytemuck::cast_slice(&voxels),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             }
         );
         
@@ -225,6 +180,16 @@ impl<'window> WgpuCtx<'window> {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
                 label: Some("bind_group_layout"),
             }
@@ -237,6 +202,10 @@ impl<'window> WgpuCtx<'window> {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: data_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: voxel_buffer.as_entire_binding(),
                 },
             ],
             label: Some("data_bind_group"),
@@ -307,13 +276,14 @@ impl<'window> WgpuCtx<'window> {
             vertex_buffer,
             index_buffer,
             data_buffer,
+            voxel_buffer,
             data_bind_group,
-            voxel_world,
+            sdg,
         }
     }
 
-    pub fn new(window: Arc<Window>, voxel_world: VoxelWorld) -> WgpuCtx<'window> {
-        pollster::block_on(WgpuCtx::new_async(window, voxel_world))
+    pub fn new(window: Arc<Window>, sdg: SparseDirectedGraph<BasicNode3d>) -> WgpuCtx<'window> {
+        pollster::block_on(WgpuCtx::new_async(window, sdg))
     }
 
     // REMEMBER TO UPDATE THIS IF WE MOVE RESOLUTION FIELD
@@ -340,8 +310,12 @@ impl<'window> WgpuCtx<'window> {
         let mut data = Data::new(
             proj,
             [self.surface_config.width as f32, self.surface_config.height as f32],
-            self.voxel_world
+            self.sdg.nodes.data().len() as u32
         );
+
+        // Update voxel buffer
+        let voxels = self.sdg.nodes.data().iter().map(|x| x.clone().unwrap_or(BasicNode3d::new(&[u32::MAX; 8]))).collect::<Vec<_>>();
+        self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
         
         // Update camera position and direction in the data struct
         data.camera_pos = camera.position_array();

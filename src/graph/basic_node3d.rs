@@ -4,7 +4,7 @@ use super::sdg::{
     Childs, Path
 };
 use glam::UVec3;
-type Index = usize;
+type Index = u32;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Zorder3d {
@@ -114,10 +114,15 @@ impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
     fn depth(&self) -> u32 { self.0.len() as u32 }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, 
+    Serialize, Deserialize, 
+    bytemuck::Pod, bytemuck::Zeroable
+)]
 pub struct BasicNode3d {
     children: [Index; 8]
 }
+
 impl Node for BasicNode3d {
     type Children = Zorder3d;
 

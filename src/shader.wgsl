@@ -42,29 +42,16 @@ struct RayHit {
 }
 
 // Get voxel value at given position
-fn get_voxel(pos: vec3<i32>) -> u32 {
-    // Bounds check
-    if (pos.x < 0 || pos.y < 0 || pos.z < 0 || pos.x >= 8 || pos.y >= 8 || pos.z >= 8) {
-        return 0u;
-    }
+fn get_voxel(pos: vec3<u32>) -> u32 {
+    if (pos.x > 7 || pos.y > 7 || pos.z > 7) { return 0u; }
     
     // Calculate index into voxel array
     let flat_index = pos.x * 8 * 8 + pos.y * 8 + pos.z;
     let vec_index = flat_index / 4;
     let component_index = flat_index % 4;
     
-    // Extract the correct component from the vec4
-    let vec4_value = data.voxels[vec_index];
-    
-    if (component_index == 0) {
-        return vec4_value.x;
-    } else if (component_index == 1) {
-        return vec4_value.y;
-    } else if (component_index == 2) {
-        return vec4_value.z;
-    } else {
-        return vec4_value.w;
-    }
+    // Extract voxel from the structure
+    return data.voxels[vec_index][component_index];
 }
 
 // DDA-based ray tracing through the voxel grid
@@ -92,7 +79,6 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
     var tMin = vec3<f32>(-1000.0);
     var tMax = vec3<f32>(1000.0);
     
-    // Handle X planes with improved numerical stability
     if (abs(direction.x) > 0.00001) {
         let tx1 = (0.0 - origin.x) / direction.x;
         let tx2 = (grid_size.x - origin.x) / direction.x;
@@ -106,7 +92,6 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
         }
     }
     
-    // Handle Y planes with improved numerical stability
     if (abs(direction.y) > 0.00001) {
         let ty1 = (0.0 - origin.y) / direction.y;
         let ty2 = (grid_size.y - origin.y) / direction.y;
@@ -120,7 +105,6 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
         }
     }
     
-    // Handle Z planes with improved numerical stability
     if (abs(direction.z) > 0.00001) {
         let tz1 = (0.0 - origin.z) / direction.z;
         let tz2 = (grid_size.z - origin.z) / direction.z;
@@ -215,16 +199,10 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
         tNext.z = 1000000.0;
     }
     
-    // Maximum number of steps to prevent infinite loops
-    // Increased for better rendering quality when viewing from outside the grid
-    let max_steps = 300;
-    
     // DDA algorithm
-    for (var i = 0; i < max_steps; i++) {
+    for (var i = 0; i < 100; i++) {
         // Check if current voxel is filled
-        if (voxel_pos.x >= 0 && voxel_pos.x < 8 && 
-            voxel_pos.y >= 0 && voxel_pos.y < 8 && 
-            voxel_pos.z >= 0 && voxel_pos.z < 8) {
+        if (voxel_pos.x < 8 && voxel_pos.y < 8 && voxel_pos.z < 8) {
             
             // Skip the voxel that contains the camera position
             if (!is_inside_grid || 
@@ -232,7 +210,7 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
                 voxel_pos.y != camera_voxel.y || 
                 voxel_pos.z != camera_voxel.z) {
                 
-                let voxel_value = get_voxel(voxel_pos);
+                let voxel_value = get_voxel(vec3<u32>(voxel_pos));
                 if (voxel_value > 0u) {
                     // We hit a voxel
                     result.hit = true;
@@ -244,10 +222,7 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
                     return result;
                 }
             }
-        } else {
-            // We've left the grid bounds
-            break;
-        }
+        } else { break; }
         
         // Find the minimum tNext value to determine which voxel boundary to cross next
         if (tNext.x < tNext.y && tNext.x < tNext.z) {
@@ -274,9 +249,7 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
         pos = origin + direction * t;
         
         // Check if we've exited the grid
-        if (t > tExit) {
-            break;
-        }
+        if (t > tExit) { break; }
     }
     
     return result;
@@ -284,16 +257,12 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Convert texture coordinates to ray direction in view space
-    // Map from [0,1] to [-1,1] for x and y
     let aspect = data.resolution.x / data.resolution.y;
+    // Transform from <0,1> to <-1, 1>
+    let uv = vec2<f32>(in.texcoord.x * 2.0 - 1.0, in.texcoord.y * 2.0 - 1.0)
+           * vec2<f32>(aspect, 1.0);
     
-    // Properly handle aspect ratio for even ray distribution
-    let uv = vec2<f32>(
-        (in.texcoord.x * 2.0 - 1.0) * aspect,
-        in.texcoord.y * 2.0 - 1.0
-    );
-    
+    let a = vec2<u64>(0, 0);
     let camera_pos = data.camera_pos;
     let forward = data.camera_dir;
     let up = vec3<f32>(0.0, 1.0, 0.0);
@@ -302,13 +271,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let right = normalize(cross(forward, up));
     let camera_up = normalize(cross(right, forward));
     
-    let fov_rad = 0.8; // Field of view in radians (approximately 45 degrees)
+    let fov_rad = 1.; // Field of view in radians (approximately 45 degrees)
     
     // The ray direction is calculated as a linear combination of the basis vectors
     // scaled by the tangent of the field of view angle
     let ray_dir = normalize(forward + right * uv.x * tan(fov_rad) + camera_up * uv.y * tan(fov_rad));
     
-    // Debug visualization - show grid lines
     // This helps visualize the voxel grid structure
     let grid_size = 8.0;
     let grid_spacing = 1.0;
@@ -321,16 +289,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Base color from normal
         let normal_color = hit.normal * 0.5 + 0.5;
         
-        // Make voxel color more vibrant to stand out
         // Slightly vary color based on normal to help distinguish faces
         let normal_influence = abs(hit.normal) * 0.3;
         let voxel_id_color = vec3<f32>(
-            1.0 - normal_influence.z * 0.2, 
+            0.8 - normal_influence.z * 0.2, 
             0.5 + normal_influence.x * 0.2, 
-            0.2 + normal_influence.y * 0.3  // Vary color slightly based on face orientation
+            0.4 + normal_influence.y * 0.3
         );
-        
-        // Final color with lighting and distance adjustment
         return vec4<f32>(voxel_id_color, 1.0);
     } else {
         // Grid visualization in the background
@@ -360,6 +325,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         
         // Sky gradient
         let sky_t = in.texcoord.y;
-        return vec4<f32>(0.5 + sky_t * 0.2, 0.7 + sky_t * 0.1, 1.0, 1.0);
+        return vec4<f32>(0.0,0.0,0.0,0.0);//vec4<f32>(0.5 + sky_t * 0.2, 0.7 + sky_t * 0.1, 1.0, 1.0);
     }
 }

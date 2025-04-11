@@ -5,6 +5,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 mod app;
 mod wgpu_ctx;
 mod camera;
+mod graph;
 
 fn main() -> Result<(), EventLoopError> {
     let event_loop = EventLoop::new().unwrap();

@@ -1,5 +1,6 @@
+use crate::graph::sdg::SparseDirectedGraph;
 use crate::wgpu_ctx::WgpuCtx;
-use crate::wgpu_ctx::VoxelWorld;
+// use crate::wgpu_ctx::VoxelWorld;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -50,7 +51,7 @@ impl<'window> ApplicationHandler for App<'window> {
             )
         });
         self.wgpu_ctx.get_or_init(|| {
-            WgpuCtx::new(window.clone(), VoxelWorld::default())
+            WgpuCtx::new(window.clone(), SparseDirectedGraph::new(4))
         });
         
         window.request_redraw();

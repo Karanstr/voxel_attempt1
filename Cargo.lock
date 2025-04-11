@@ -1628,9 +1628,9 @@ checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
 name = "vec_mem_heap"
-version = "0.5.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1405b0a7189bf06e7cc303cec185d46b11dccc2dd00037a6efaa29097ea0670b"
+checksum = "985020498fa105a1712e59caf1ae2314da2121dfbfa076419b17bc604e075feb"
 dependencies = [
  "serde",
 ]
