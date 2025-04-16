@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use wgpu::{util::DeviceExt, MemoryHints::Performance, PipelineCompilationOptions, Trace};
 use winit::window::Window;
-use glam::Mat4;
+use glam::{Mat4, UVec3};
 use crate::camera::Camera;
-use crate::graph::basic_node3d::BasicNode3d;
+use crate::graph::basic_node3d::{BasicNode3d, BasicPath3d};
 use crate::graph::sdg::*;
 
 // Data required to create buffers for full screen quad
@@ -20,21 +20,24 @@ struct Data {
     model: [[f32; 4]; 4],
     projection: [[f32; 4]; 4],
     resolution: [f32; 2],
-    padding1: [f32; 2],
+    render_root: [u32; 2],
     camera_pos: [f32; 3],
-    padding2: f32,
+    padding1: f32,
     camera_dir: [f32; 3],
     voxel_count: u32,
 }
 impl Data {
-    fn new(projection: Mat4, resolution: [f32; 2], voxel_count: u32) -> Self {
+    fn new(projection: Mat4,
+        resolution: [f32; 2],
+        render_root: [u32; 2],
+        voxel_count: u32) -> Self {
         Self {
             model: Mat4::IDENTITY.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
             resolution,
-            padding1: [0.0, 0.0],
+            render_root,
             camera_pos: [4.0, 4.0, 12.0],
-            padding2: 0.0,
+            padding1: 0.0,
             camera_dir: [4.0, 4.0, 0.0],
             voxel_count,
         }
@@ -84,10 +87,11 @@ pub struct WgpuCtx<'window> {
     data_bind_group: wgpu::BindGroup,
 
     sdg: SparseDirectedGraph<BasicNode3d>,
+    render_root: Pointer,
 }
 
 impl<'window> WgpuCtx<'window> {
-    pub async fn new_async(window: Arc<Window>, sdg: SparseDirectedGraph<BasicNode3d>) -> WgpuCtx<'window> {
+    pub async fn new_async(window: Arc<Window>, sdg: SparseDirectedGraph<BasicNode3d>, render_root: Pointer) -> WgpuCtx<'window> {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
         let adapter = instance
@@ -149,6 +153,7 @@ impl<'window> WgpuCtx<'window> {
                 contents: bytemuck::cast_slice(&[Data::new(
                     Mat4::IDENTITY,
                     [width as f32, height as f32],
+                    [0, 0],
                     sdg.nodes.data().len() as u32
                 )]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -283,11 +288,18 @@ impl<'window> WgpuCtx<'window> {
             voxel_buffer,
             data_bind_group,
             sdg,
+            render_root,
         }
     }
 
-    pub fn new(window: Arc<Window>, sdg: SparseDirectedGraph<BasicNode3d>) -> WgpuCtx<'window> {
-        pollster::block_on(WgpuCtx::new_async(window, sdg))
+    pub fn new(window: Arc<Window>, mut sdg: SparseDirectedGraph<BasicNode3d>) -> WgpuCtx<'window> {
+        let height = 3;
+        let mut render_root = sdg.get_root(1, height);
+        let path = BasicPath3d::from_cell(UVec3::new(0, 1, 0), height).steps();
+        render_root = sdg.set_node(render_root, &path, 0).unwrap();
+        let path = BasicPath3d::from_cell(UVec3::new(0, 0, 0), height).steps();
+        render_root = sdg.set_node(render_root, &path, 0).unwrap();
+        pollster::block_on(WgpuCtx::new_async(window, sdg, render_root))
     }
 
     // REMEMBER TO UPDATE THIS IF WE MOVE RESOLUTION FIELD
@@ -314,6 +326,7 @@ impl<'window> WgpuCtx<'window> {
         let mut data = Data::new(
             proj,
             [self.surface_config.width as f32, self.surface_config.height as f32],
+            [self.render_root.idx, self.render_root.height],
             self.sdg.nodes.data().len() as u32
         );
 

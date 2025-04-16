@@ -6,6 +6,9 @@ use super::sdg::{
 use glam::UVec3;
 type Index = u32;
 
+// Front-Back Z
+// Top-Bottom Y
+// Left-Right X
 #[derive(Debug, Clone, Copy)]
 pub enum Zorder3d {
     FrontTopLeft,
@@ -20,14 +23,14 @@ pub enum Zorder3d {
 impl Zorder3d {
     fn to_index(&self) -> usize {
         match self {
-            Self::FrontTopLeft => 0,
-            Self::FrontTopRight => 1,
-            Self::FrontBottomLeft => 2,
-            Self::FrontBottomRight => 3,
-            Self::BackTopLeft => 4,
-            Self::BackTopRight => 5,
-            Self::BackBottomLeft => 6,
-            Self::BackBottomRight => 7
+            Self::FrontTopLeft => 0, // 000
+            Self::FrontTopRight => 1, // 001
+            Self::FrontBottomLeft => 2, // 010
+            Self::FrontBottomRight => 3, // 011
+            Self::BackTopLeft => 4, // 100
+            Self::BackTopRight => 5, // 101
+            Self::BackBottomLeft => 6, // 110
+            Self::BackBottomRight => 7, // 111
         }
     }
 }
@@ -87,12 +90,14 @@ impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
     fn to_cell(&self) -> UVec3 {
         let mut x = 0;
         let mut y = 0;
+        let mut z = 0;
         for layer in 0 .. self.depth() {
             let coord = self.steps()[layer as usize].to_coord();
             x |= (coord.x as u32) << layer;
             y |= (coord.y as u32) << layer;
+            z |= (coord.z as u32) << layer;
         }
-        UVec3::new(x, y, 0)
+        UVec3::new(x, y, z)
     }
 
     fn from_cell(cell: UVec3, depth: u32) -> Self {
@@ -102,9 +107,7 @@ impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
         let mut z = cell.z;
         for _ in 0 .. depth {
             path.push(Zorder3d::from(UVec3::new(x & 0b1, y & 0b1, z & 0b1)));
-            x >>= 1;
-            y >>= 1;
-            z >>= 1;
+            x >>= 1; y >>= 1; z >>= 1;
         }
         path.reverse();
         Self(path)
@@ -129,7 +132,7 @@ impl Node for BasicNode3d {
     fn new(children:&[Index]) -> Self {
         if children.len() != 8 { panic!("Invalid number of children"); }
         Self { 
-            children: children.clone().try_into().unwrap()
+            children: children.try_into().unwrap()
         } 
     }
     fn get(&self, child:Self::Children) -> Index {

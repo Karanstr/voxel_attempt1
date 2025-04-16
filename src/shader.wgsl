@@ -2,9 +2,9 @@ struct Data {
     model: mat4x4<f32>,
     projection: mat4x4<f32>,
     resolution: vec2<f32>,
-    padding1: vec2<f32>,
+    render_root: vec2<u32>,
     camera_pos: vec3<f32>,
-    padding2: f32,
+    padding1: f32,
     camera_dir: vec3<f32>,
     voxel_count: f32,
 }
@@ -36,7 +36,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-/*
+
 // Ray hit information
 struct RayHit {
     hit: bool,
@@ -46,38 +46,36 @@ struct RayHit {
     voxel_value: u32,
 }
 
+
+
 // Get voxel value at given position
-fn get_voxel(pos: vec3<u32>) -> u32 {
-    if (pos.x > 7 || pos.y > 7 || pos.z > 7) { return 0u; }
-    
-    // Calculate index into voxel array
-    let flat_index = pos.x * 8 * 8 + pos.y * 8 + pos.z;
-    let vec_index = flat_index / 4;
-    let component_index = flat_index % 4;
-    
-    // Extract voxel from the structure
-    return data.voxels[vec_index][component_index];
+fn get_voxel(root: u32, height: u32, pos: vec3<u32>) -> u32 {
+    let grid_size = 1u << height;
+    if (max(pos.x, max(pos.y, pos.z)) >= grid_size) { return 0u; }
+    var node = voxels[root];
+    for (var i = 0u; i <= height; i++) {
+        let cur_height = height - i;
+        let childx = (pos.x >> cur_height) & 1;
+        let childy = (pos.y >> cur_height) & 1;
+        let childz = (pos.z >> cur_height) & 1;
+        node = voxels[node.children[childz << 2 | childy << 1 | childx]];
+    }
+    return node.children[0];
 }
 
 // DDA-based ray tracing through the voxel grid
-fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
+fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>, grid_size: f32, grid_spacing: f32) -> RayHit {
     var result: RayHit;
     result.hit = false;
     result.t = 1000.0;
     result.normal = vec3<f32>(0.0, 0.0, 0.0);
     result.position = vec3<f32>(0.0, 0.0, 0.0);
     result.voxel_value = 0u;
-    
-    // Check if camera is inside the grid bounds
-    let is_inside_grid = origin.x >= 0.0 && origin.x < 8.0 &&
-                         origin.y >= 0.0 && origin.y < 8.0 &&
-                         origin.z >= 0.0 && origin.z < 8.0;
+    let root = data.render_root[0];
+    let height = data.render_root[1];
     
     // Get the voxel position of the camera
     let camera_voxel = vec3<i32>(floor(origin));
-    
-    // Grid dimensions
-    let grid_size = vec3<f32>(8.0, 8.0, 8.0);
     
     // Find intersection with the grid bounds
     // Calculate entry and exit points for the ray with the grid bounds
@@ -86,12 +84,12 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
     
     if (abs(direction.x) > 0.00001) {
         let tx1 = (0.0 - origin.x) / direction.x;
-        let tx2 = (grid_size.x - origin.x) / direction.x;
+        let tx2 = (grid_size - origin.x) / direction.x;
         tMin.x = min(tx1, tx2);
         tMax.x = max(tx1, tx2);
     } else {
         // Ray is parallel to the X axis
-        if (origin.x < 0.0 || origin.x > grid_size.x) {
+        if (origin.x < 0.0 || origin.x > grid_size) {
             // Ray is outside grid bounds on X axis and won't intersect
             return result;
         }
@@ -99,12 +97,12 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
     
     if (abs(direction.y) > 0.00001) {
         let ty1 = (0.0 - origin.y) / direction.y;
-        let ty2 = (grid_size.y - origin.y) / direction.y;
+        let ty2 = (grid_size - origin.y) / direction.y;
         tMin.y = min(ty1, ty2);
         tMax.y = max(ty1, ty2);
     } else {
         // Ray is parallel to the Y axis
-        if (origin.y < 0.0 || origin.y > grid_size.y) {
+        if (origin.y < 0.0 || origin.y > grid_size) {
             // Ray is outside grid bounds on Y axis and won't intersect
             return result;
         }
@@ -112,12 +110,12 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
     
     if (abs(direction.z) > 0.00001) {
         let tz1 = (0.0 - origin.z) / direction.z;
-        let tz2 = (grid_size.z - origin.z) / direction.z;
+        let tz2 = (grid_size - origin.z) / direction.z;
         tMin.z = min(tz1, tz2);
         tMax.z = max(tz1, tz2);
     } else {
         // Ray is parallel to the Z axis
-        if (origin.z < 0.0 || origin.z > grid_size.z) {
+        if (origin.z < 0.0 || origin.z > grid_size) {
             // Ray is outside grid bounds on Z axis and won't intersect
             return result;
         }
@@ -206,26 +204,16 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
     
     // DDA algorithm
     for (var i = 0; i < 100; i++) {
-        // Check if current voxel is filled
-        if (voxel_pos.x < 8 && voxel_pos.y < 8 && voxel_pos.z < 8) {
-            
-            // Skip the voxel that contains the camera position
-            if (!is_inside_grid || 
-                voxel_pos.x != camera_voxel.x || 
-                voxel_pos.y != camera_voxel.y || 
-                voxel_pos.z != camera_voxel.z) {
-                
-                let voxel_value = get_voxel(vec3<u32>(voxel_pos));
-                if (voxel_value > 0u) {
-                    // We hit a voxel
-                    result.hit = true;
-                    result.position = pos;
-                    result.t = t;
-                    result.voxel_value = voxel_value;
-                    result.normal = hit_face; // Use the float-based normal directly
-                    
-                    return result;
-                }
+        if (max(voxel_pos.x, max(voxel_pos.y, voxel_pos.z)) < i32(grid_size)) {
+            let voxel_value = get_voxel(root, height, vec3<u32>(voxel_pos));
+            if (voxel_value > 0u) {
+                // We hit a voxel
+                result.hit = true;
+                result.position = pos;
+                result.t = t;
+                result.voxel_value = voxel_value;
+                result.normal = hit_face; // Use the float-based normal directly
+                return result;
             }
         } else { break; }
         
@@ -262,31 +250,36 @@ fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>) -> RayHit {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let grid_size = f32(1u << data.render_root[1]);
+    // Min voxel size
+    let grid_spacing = 1.0;
+
     let aspect = data.resolution.x / data.resolution.y;
     // Transform from <0,1> to <-1, 1>
-    let uv = vec2<f32>(in.texcoord.x * 2.0 - 1.0, in.texcoord.y * 2.0 - 1.0)
-           * vec2<f32>(aspect, 1.0);
+    let uv = vec2<f32>(in.texcoord.x * 2.0 - 1.0, in.texcoord.y * 2.0 - 1.0) * vec2<f32>(aspect, 1.0);
     
     let camera_pos = data.camera_pos;
     let forward = data.camera_dir;
-    let up = vec3<f32>(0.0, 1.0, 0.0);
-    
+
     // Create camera basis vectors
+    let up = vec3<f32>(0.0, 1.0, 0.0);
     let right = normalize(cross(forward, up));
     let camera_up = normalize(cross(right, forward));
     
-    let fov_rad = 1.; // Field of view in radians (approximately 45 degrees)
+    // Field of view in radians (approximately 45 degrees)
+    let fov_rad = 1.;
     
     // The ray direction is calculated as a linear combination of the basis vectors
     // scaled by the tangent of the field of view angle
     let ray_dir = normalize(forward + right * uv.x * tan(fov_rad) + camera_up * uv.y * tan(fov_rad));
     
-    // This helps visualize the voxel grid structure
-    let grid_size = 8.0;
-    let grid_spacing = 1.0;
-    
-    // Perform DDA-based ray tracing
-    let hit = raymarch_voxels(camera_pos, ray_dir);
+    // Perform DDA-based ray marching
+    let hit = raymarch_voxels(
+        camera_pos, 
+        ray_dir, 
+        grid_size,
+        grid_spacing,
+    );
     
     // Color based on hit result
     if (hit.hit) {
@@ -310,8 +303,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let hit_pos = camera_pos + ray_dir * grid_t;
             
             // Check if we're within grid bounds
-            if (hit_pos.x >= 0.0 && hit_pos.x <= grid_size && 
-                hit_pos.z >= 0.0 && hit_pos.z <= grid_size) {
+            if (min(hit_pos.x, hit_pos.z) >= 0.0 && max(hit_pos.x, hit_pos.z) <= grid_size) {
                 
                 // Draw grid lines
                 let cell_x = fract(hit_pos.x / grid_spacing);
@@ -327,15 +319,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             }
         }
         
-        // Sky gradient
-        let sky_t = in.texcoord.y;
-        return vec4<f32>(0.0,0.0,0.0,0.0);//vec4<f32>(0.5 + sky_t * 0.2, 0.7 + sky_t * 0.1, 1.0, 1.0);
+        return vec4<f32>(0.0);
     }
 }
-*/
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(0.0,0.0,0.0,0.0);
-}
-
-
