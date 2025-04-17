@@ -78,7 +78,6 @@ impl Childs for Zorder3d {
 
 pub struct BasicPath3d<Zorder3d>(Vec<Zorder3d>);
 impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
-    
     fn new() -> Self { Self(Vec::new()) }
 
     fn step_down(&self, child:Zorder3d) -> Self {
@@ -101,6 +100,7 @@ impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
     }
 
     fn from_cell(cell: UVec3, depth: u32) -> Self {
+        if cell.max_element() > (1 << depth) - 1 { panic!("Cell is too large for depth") }
         let mut path = Vec::with_capacity(depth as usize);
         let mut x = cell.x;
         let mut y = cell.y;

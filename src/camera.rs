@@ -58,14 +58,9 @@ impl Camera {
         self.aspect_ratio = aspect_ratio;
     }
     
-    // Getters and setters    
-    pub fn position_array(&self) -> [f32; 3] {
-        [self.position.x, self.position.y, self.position.z]
-    }
-    
-    pub fn set_position(&mut self, position: Vec3) {
-        self.position = position;
-    }
+    pub fn position(&self) -> Vec3 { self.position }
+
+    pub fn set_position(&mut self, position: Vec3) { self.position = position; }
 
     pub fn forward(&self) -> Vec3 {
         let pitch_rad = self.pitch.to_radians();
@@ -78,8 +73,4 @@ impl Camera {
         ).normalize()
     }
     
-    pub fn forward_array(&self) -> [f32; 3] {
-        let forward = self.forward();
-        [forward.x, forward.y, forward.z]
-    }
 }

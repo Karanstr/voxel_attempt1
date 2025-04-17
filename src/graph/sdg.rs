@@ -172,6 +172,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     }
     
     pub fn descend(&self, start:Pointer, path:&[T::Children]) -> Option<Pointer> {
+        if start.height < path.len() as u32 { panic!("Path is longer than start allows.") }
         let trail = self.get_trail(start.idx, path);
         let node_pointer = trail.last()?;
         Some(Pointer::new(*node_pointer, start.height - (trail.len() as u32 - 1)))

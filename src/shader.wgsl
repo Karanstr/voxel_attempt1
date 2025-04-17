@@ -36,222 +36,102 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+fn is_inf(val: f32) -> bool {
+    let zero = f32(0.0);
+    return abs(val) == f32(1.0) / zero;
+}
 
 // Ray hit information
 struct RayHit {
     hit: bool,
-    position: vec3<f32>,
+    // position: vec3<f32>,
     normal: vec3<f32>,
-    t: f32,
+    // t: f32,
     voxel_value: u32,
 }
 
-
-
-// Get voxel value at given position
-fn get_voxel(root: u32, height: u32, pos: vec3<u32>) -> u32 {
-    let grid_size = 1u << height;
-    if (max(pos.x, max(pos.y, pos.z)) >= grid_size) { return 0u; }
-    var node = voxels[root];
-    for (var i = 0u; i <= height; i++) {
-        let cur_height = height - i;
-        let childx = (pos.x >> cur_height) & 1;
-        let childy = (pos.y >> cur_height) & 1;
-        let childz = (pos.z >> cur_height) & 1;
-        node = voxels[node.children[childz << 2 | childy << 1 | childx]];
-    }
-    return node.children[0];
+fn within3f(pos: vec3<f32>, grid_size: f32) -> bool {
+    return all(pos >= vec3<f32>(0.0)) && all(pos <= vec3<f32>(grid_size));
 }
 
-// DDA-based ray tracing through the voxel grid
-fn raymarch_voxels(origin: vec3<f32>, direction: vec3<f32>, grid_size: f32, grid_spacing: f32) -> RayHit {
+fn within3u(pos: vec3<u32>, grid_size: u32) -> bool {
+    return all(pos >= vec3<u32>(0)) && all(pos <= vec3<u32>(grid_size));
+}
+
+fn within3i(pos: vec3<i32>, grid_size: i32) -> bool {
+    return all(pos >= vec3<i32>(0)) && all(pos <= vec3<i32>(grid_size));
+}
+
+fn withinf(pos: f32, grid_size: f32) -> bool {
+    return pos >= 0.0 && pos <= grid_size;
+}
+
+// Get voxel value at given position
+fn get_voxel(root: vec2<u32>, pos: vec3<f32>, voxel_size: f32) -> u32 {
+    let grid_size = 1u << root[1];
+    let cell = vec3<u32>(floor(2.0 * pos / voxel_size));
+    var cur_index = root[0];
+    for (var i = root[1]; i > 0; i--) {
+        let childx = (cell.x >> i) & 1;
+        let childy = (cell.y >> i) & 1;
+        let childz = (cell.z >> i) & 1;
+        let next_index = voxels[cur_index].children[childz << 2 | childy << 1 | childx];
+        if (next_index == cur_index) { break; } else { cur_index = next_index; }
+    }
+    return cur_index;
+}
+
+fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, grid_size: f32, grid_spacing: f32) -> RayHit {
     var result: RayHit;
     result.hit = false;
-    result.t = 1000.0;
     result.normal = vec3<f32>(0.0, 0.0, 0.0);
-    result.position = vec3<f32>(0.0, 0.0, 0.0);
     result.voxel_value = 0u;
-    let root = data.render_root[0];
-    let height = data.render_root[1];
-    
-    // Get the voxel position of the camera
-    let camera_voxel = vec3<i32>(floor(origin));
-    
-    // Find intersection with the grid bounds
-    // Calculate entry and exit points for the ray with the grid bounds
-    var tMin = vec3<f32>(-1000.0);
-    var tMax = vec3<f32>(1000.0);
-    
-    if (abs(direction.x) > 0.00001) {
-        let tx1 = (0.0 - origin.x) / direction.x;
-        let tx2 = (grid_size - origin.x) / direction.x;
-        tMin.x = min(tx1, tx2);
-        tMax.x = max(tx1, tx2);
-    } else {
-        // Ray is parallel to the X axis
-        if (origin.x < 0.0 || origin.x > grid_size) {
-            // Ray is outside grid bounds on X axis and won't intersect
-            return result;
-        }
-    }
-    
-    if (abs(direction.y) > 0.00001) {
-        let ty1 = (0.0 - origin.y) / direction.y;
-        let ty2 = (grid_size - origin.y) / direction.y;
-        tMin.y = min(ty1, ty2);
-        tMax.y = max(ty1, ty2);
-    } else {
-        // Ray is parallel to the Y axis
-        if (origin.y < 0.0 || origin.y > grid_size) {
-            // Ray is outside grid bounds on Y axis and won't intersect
-            return result;
-        }
-    }
-    
-    if (abs(direction.z) > 0.00001) {
-        let tz1 = (0.0 - origin.z) / direction.z;
-        let tz2 = (grid_size - origin.z) / direction.z;
-        tMin.z = min(tz1, tz2);
-        tMax.z = max(tz1, tz2);
-    } else {
-        // Ray is parallel to the Z axis
-        if (origin.z < 0.0 || origin.z > grid_size) {
-            // Ray is outside grid bounds on Z axis and won't intersect
-            return result;
-        }
-    }
-    
-    // Find the maximum entry and minimum exit points
+    let epsilon = 0.00001;
+    let zeros = vec3<f32>(0.0);
+
+    let tMin = select(0.0 - camera_pos, grid_size - camera_pos, direction < zeros) / direction;
+
+    if (!within3f(camera_pos, grid_size)
+        && (((is_inf(tMin.x) || tMin.x < 0.0) && !withinf(camera_pos.x, grid_size))
+        || ((is_inf(tMin.y) || tMin.y < 0.0) && !withinf(camera_pos.y, grid_size))
+        || ((is_inf(tMin.z) || tMin.z < 0.0) && !withinf(camera_pos.z, grid_size)))
+    ) { return result; }
+
     let tEntry = max(max(tMin.x, tMin.y), tMin.z);
-    let tExit = min(min(tMax.x, tMax.y), tMax.z);
+    var t = max(0.0, tEntry) + epsilon;
+    var pos = camera_pos + direction * t;
     
-    // If tEntry > tExit, the ray misses the grid
-    // If tExit < 0, the grid is behind the ray
-    if (tEntry > tExit || tExit < 0.0) {
-        return result;
-    }
-    
-    // Ensure we start at or after the ray origin
-    // Add a small epsilon to avoid numerical precision issues at grid boundaries
-    var t = max(0.0, tEntry) + 0.0001;
-    
-    // Calculate the starting position at the grid boundary
-    var pos = origin + direction * t;
-    
-    // Initialize the current voxel position
-    // Use a more robust method to ensure we're inside the grid
-    var voxel_pos = vec3<i32>(clamp(floor(pos), vec3<f32>(0.0), vec3<f32>(grid_size - 1.0)));
-    
-    // Initialize hit_face based on which boundary we entered from
-    var hit_face = vec3<f32>(0.0);
-    
-    // Determine which face we're entering from by checking which t value is largest
-    if (tEntry == tMin.x) {
-        hit_face = vec3<f32>(-sign(direction.x), 0.0, 0.0);
-    } else if (tEntry == tMin.y) {
-        hit_face = vec3<f32>(0.0, -sign(direction.y), 0.0);
-    } else if (tEntry == tMin.z) {
-        hit_face = vec3<f32>(0.0, 0.0, -sign(direction.z));
-    }
-    
-    // Calculate the step direction for each axis
-    let step = vec3<i32>(
-        i32(sign(direction.x)),
-        i32(sign(direction.y)),
-        i32(sign(direction.z))
-    );
-    
-    // Calculate the initial tDelta values (distance along the ray to the next voxel boundary)
-    var tDelta = vec3<f32>(
-        select(1000000.0, abs(1.0 / direction.x), step.x != 0),
-        select(1000000.0, abs(1.0 / direction.y), step.y != 0),
-        select(1000000.0, abs(1.0 / direction.z), step.z != 0)
-    );
-    
-    // Calculate the initial tMax values (distance along the ray to the next voxel boundary)
-    // First, calculate the fractional part of the position with proper handling
-    let frac_pos = fract(pos);
-    
-    // Then calculate the distance to the next voxel boundary with improved robustness
-    var tNext = vec3<f32>();
-    
-    // Handle X axis
-    if (step.x > 0) {
-        tNext.x = (1.0 - frac_pos.x) * tDelta.x;
-    } else if (step.x < 0) {
-        tNext.x = frac_pos.x * tDelta.x;
-    } else {
-        tNext.x = 1000000.0;
-    }
-    
-    // Handle Y axis
-    if (step.y > 0) {
-        tNext.y = (1.0 - frac_pos.y) * tDelta.y;
-    } else if (step.y < 0) {
-        tNext.y = frac_pos.y * tDelta.y;
-    } else {
-        tNext.y = 1000000.0;
-    }
-    
-    // Handle Z axis
-    if (step.z > 0) {
-        tNext.z = (1.0 - frac_pos.z) * tDelta.z;
-    } else if (step.z < 0) {
-        tNext.z = frac_pos.z * tDelta.z;
-    } else {
-        tNext.z = 1000000.0;
-    }
-    
-    // DDA algorithm
-    for (var i = 0; i < 100; i++) {
-        if (max(voxel_pos.x, max(voxel_pos.y, voxel_pos.z)) < i32(grid_size)) {
-            let voxel_value = get_voxel(root, height, vec3<u32>(voxel_pos));
-            if (voxel_value > 0u) {
-                // We hit a voxel
-                result.hit = true;
-                result.position = pos;
-                result.t = t;
-                result.voxel_value = voxel_value;
-                result.normal = hit_face; // Use the float-based normal directly
-                return result;
-            }
-        } else { break; }
-        
-        // Find the minimum tNext value to determine which voxel boundary to cross next
-        if (tNext.x < tNext.y && tNext.x < tNext.z) {
-            // X axis
-            t = tNext.x;
-            tNext.x += tDelta.x;
-            voxel_pos.x += step.x;
-            hit_face = vec3<f32>(-sign(direction.x), 0.0, 0.0);
-        } else if (tNext.y < tNext.z) {
-            // Y axis
-            t = tNext.y;
-            tNext.y += tDelta.y;
-            voxel_pos.y += step.y;
-            hit_face = vec3<f32>(0.0, -sign(direction.y), 0.0);
-        } else {
-            // Z axis
-            t = tNext.z;
-            tNext.z += tDelta.z;
-            voxel_pos.z += step.z;
-            hit_face = vec3<f32>(0.0, 0.0, -sign(direction.z));
+    let stepdir = sign(direction);
+    result.normal = select(zeros, -stepdir, tMin == vec3<f32>(tEntry));
+    let max_steps = 20;
+    for (var i = 0; i < max_steps; i++) {
+        if (!within3f(pos, grid_size)) { break; }
+        result.voxel_value = get_voxel(data.render_root, pos, grid_spacing);
+        if (result.voxel_value > 0u) {
+            result.hit = true;
+            return result;
         }
+
+        let next_pos = select(
+            select(ceil(pos), floor(pos), stepdir < zeros),
+            pos,
+            stepdir == zeros
+        );
+        let times = (next_pos - pos) / direction;
+        let t = min(times.x, min(times.y, times.z));
+        result.normal = select(zeros, -stepdir, times == vec3<f32>(t));
         
-        // Update position
-        pos = origin + direction * t;
-        
-        // Check if we've exited the grid
-        if (t > tExit) { break; }
+        pos += direction * t + epsilon * stepdir;
     }
-    
+
     return result;
 }
 
+// Camera is passed in with it's origin on the center of the voxel grid
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let grid_size = f32(1u << data.render_root[1]);
-    // Min voxel size
+    // Lowest voxel size
     let grid_spacing = 1.0;
 
     let aspect = data.resolution.x / data.resolution.y;
@@ -261,19 +141,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let camera_pos = data.camera_pos;
     let forward = data.camera_dir;
 
-    // Create camera basis vectors
     let up = vec3<f32>(0.0, 1.0, 0.0);
     let right = normalize(cross(forward, up));
     let camera_up = normalize(cross(right, forward));
     
-    // Field of view in radians (approximately 45 degrees)
     let fov_rad = 1.;
-    
-    // The ray direction is calculated as a linear combination of the basis vectors
-    // scaled by the tangent of the field of view angle
     let ray_dir = normalize(forward + right * uv.x * tan(fov_rad) + camera_up * uv.y * tan(fov_rad));
     
-    // Perform DDA-based ray marching
     let hit = raymarch_voxels(
         camera_pos, 
         ray_dir, 
@@ -281,7 +155,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         grid_spacing,
     );
     
-    // Color based on hit result
     if (hit.hit) {
         // Base color from normal
         let normal_color = hit.normal * 0.5 + 0.5;
@@ -296,14 +169,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(voxel_id_color, 1.0);
     } else {
         // Grid visualization in the background
-        // Project ray to the grid plane (y=0)
+        // Project ray to the grid plane (y = 0)
         let grid_t = -camera_pos.y / ray_dir.y;
         
         if (grid_t > 0.0) {
             let hit_pos = camera_pos + ray_dir * grid_t;
             
-            // Check if we're within grid bounds
-            if (min(hit_pos.x, hit_pos.z) >= 0.0 && max(hit_pos.x, hit_pos.z) <= grid_size) {
+            if (withinf(hit_pos.x, grid_size) && withinf(hit_pos.z, grid_size)) {
                 
                 // Draw grid lines
                 let cell_x = fract(hit_pos.x / grid_spacing);

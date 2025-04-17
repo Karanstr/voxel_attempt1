@@ -293,16 +293,16 @@ impl<'window> WgpuCtx<'window> {
     }
 
     pub fn new(window: Arc<Window>, mut sdg: SparseDirectedGraph<BasicNode3d>) -> WgpuCtx<'window> {
-        let height = 3;
+        let height = 5;
         let mut render_root = sdg.get_root(1, height);
-        let path = BasicPath3d::from_cell(UVec3::new(0, 1, 0), height).steps();
-        render_root = sdg.set_node(render_root, &path, 0).unwrap();
-        let path = BasicPath3d::from_cell(UVec3::new(0, 0, 0), height).steps();
-        render_root = sdg.set_node(render_root, &path, 0).unwrap();
+        for i in 0 .. 30 {
+            let path = BasicPath3d::from_cell(UVec3::new(i, 0, 0), height).steps();
+            render_root = sdg.set_node(render_root, &path, 0).unwrap();
+        }
         pollster::block_on(WgpuCtx::new_async(window, sdg, render_root))
     }
 
-    // REMEMBER TO UPDATE THIS IF WE MOVE RESOLUTION FIELD
+    // REMEMBER TO UPDATE THIS IF WE MOVE THE RESOLUTION FIELD
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let (width, height) = new_size;
         self.surface_config.width = width.max(1);
@@ -320,6 +320,7 @@ impl<'window> WgpuCtx<'window> {
 
     pub fn draw(&mut self, camera: &Camera) {
         // Get projection matrix from camera
+        let grid_corner = glam::Vec3::new(0.0, 0.0, 0.0);
         let proj = camera.projection_matrix();
         
         // Update data buffer with new values
@@ -335,8 +336,8 @@ impl<'window> WgpuCtx<'window> {
         self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
         
         // Update camera position and direction in the data struct
-        data.camera_pos = camera.position_array();
-        data.camera_dir = camera.forward_array();
+        data.camera_pos = (camera.position() - grid_corner).into();
+        data.camera_dir = camera.forward().into();
         
         self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
         
