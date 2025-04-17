@@ -84,25 +84,16 @@ fn get_voxel(root: vec2<u32>, pos: vec3<f32>, voxel_size: f32) -> u32 {
 fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, grid_size: f32, grid_spacing: f32) -> RayHit {
     var result: RayHit;
     result.hit = false;
-    result.normal = vec3<f32>(0.0, 0.0, 0.0);
-    result.voxel_value = 0u;
     let epsilon = 0.00001;
     let zeros = vec3<f32>(0.0);
 
     let tMin = select(0.0 - camera_pos, grid_size - camera_pos, direction < zeros) / direction;
-
-    if (!within3f(camera_pos, grid_size)
-        && (((is_inf(tMin.x) || tMin.x < 0.0) && !withinf(camera_pos.x, grid_size))
-        || ((is_inf(tMin.y) || tMin.y < 0.0) && !withinf(camera_pos.y, grid_size))
-        || ((is_inf(tMin.z) || tMin.z < 0.0) && !withinf(camera_pos.z, grid_size)))
-    ) { return result; }
-
     let tEntry = max(max(tMin.x, tMin.y), tMin.z);
-    var t = max(0.0, tEntry) + epsilon;
-    var pos = camera_pos + direction * t;
-    
+    let initial_t = max(0.0, tEntry + epsilon);
+    var pos = camera_pos + direction * initial_t;
     let stepdir = sign(direction);
-    result.normal = select(zeros, -stepdir, tMin == vec3<f32>(tEntry));
+    
+    result.normal =  select(zeros, -stepdir, tMin == vec3<f32>(tEntry));
     let max_steps = 20;
     for (var i = 0; i < max_steps; i++) {
         if (!within3f(pos, grid_size)) { break; }
@@ -111,7 +102,6 @@ fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, grid_size: f32, 
             result.hit = true;
             return result;
         }
-
         let next_pos = select(
             select(ceil(pos), floor(pos), stepdir < zeros),
             pos,

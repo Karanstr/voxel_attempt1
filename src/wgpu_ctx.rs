@@ -294,10 +294,22 @@ impl<'window> WgpuCtx<'window> {
 
     pub fn new(window: Arc<Window>, mut sdg: SparseDirectedGraph<BasicNode3d>) -> WgpuCtx<'window> {
         let height = 5;
-        let mut render_root = sdg.get_root(1, height);
-        for i in 0 .. 30 {
-            let path = BasicPath3d::from_cell(UVec3::new(i, 0, 0), height).steps();
-            render_root = sdg.set_node(render_root, &path, 0).unwrap();
+        let mut render_root = sdg.get_root(0, height);
+        
+        // Create a small structure in the middle of the SDG
+        // Define the center of our structure
+        let center_x = 15;
+        let center_y = 15;
+        let center_z = 15;
+        
+        // Create a small cube
+        for x in (center_x-2)..(center_x+3) {
+            for y in (center_y-2)..(center_y+3) {
+                for z in (center_z-2)..(center_z+3) {
+                    let path = BasicPath3d::from_cell(UVec3::new(x, y, z), height).steps();
+                    render_root = sdg.set_node(render_root, &path, 1).unwrap();
+                }
+            }
         }
         pollster::block_on(WgpuCtx::new_async(window, sdg, render_root))
     }
