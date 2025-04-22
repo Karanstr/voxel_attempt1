@@ -46,29 +46,27 @@ struct RayHit {
     hit: bool,
     // position: vec3<f32>,
     normal: vec3<f32>,
-    // t: f32,
+    t: f32,
     voxel_value: u32,
 }
 
 fn get_vox_data(root: vec2<u32>, cell: vec3<u32>) -> u32 {
     if (any(clamp(cell, vec3(0u), vec3(1u << root[1]) - 1) != cell)) { return 0u; }
     var cur_index = root[0];
-    for (var cur_height = root[1]; cur_height >= 0; cur_height -= 1) {
-        let childx = (cell.x >> cur_height) & 1;
-        let childy = (cell.y >> cur_height) & 1;
-        let childz = (cell.z >> cur_height) & 1;
+    for (var cur_height = root[1]; cur_height > 0; cur_height -= 1) {
+        let shift = cur_height - 1;
+        let childx = (cell.x >> shift) & 1;
+        let childy = (cell.y >> shift) & 1;
+        let childz = (cell.z >> shift) & 1;
         let next_index = voxels[cur_index].children[childz << 2 | childy << 1 | childx];
         if (next_index == cur_index) { break; } else { cur_index = next_index; }
     }
     return cur_index;
 }
 
-fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, cells: u32, min_cell: f32) -> RayHit {
-    var result: RayHit;
-    result.hit = false;
+fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, bounds: vec3<f32>, min_cell: f32) -> RayHit {
     let epsilon = 0.00001;
     let inv_direction = 1.0 / direction;
-    let bounds = vec3(f32(cells) * min_cell);
 
     let tMin = select(0.0 - camera_pos, bounds - camera_pos, direction < vec3(0.0)) * inv_direction;
     let tEntry = max(max(tMin.x, tMin.y), tMin.z);
@@ -76,14 +74,19 @@ fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, cells: u32, min_
     var pos = camera_pos + direction * initial_t;
     let stepdir = sign(direction);
     
-    result.normal =  select(vec3(0.0), -stepdir, tMin == vec3<f32>(tEntry));
+    var normal = select(vec3(0.0), -stepdir, tMin == vec3<f32>(tEntry));
+    var cur_t = initial_t;
     let max_steps = 100;
     for (var i = 0; i < max_steps; i++) {
         if (any(clamp(pos, vec3(0.0), bounds) != pos)) { break; }
         let cell = vec3<u32>(floor(pos / min_cell));
-        result.voxel_value = get_vox_data(data.render_root, cell);
-        if (result.voxel_value > 0u) {
+        let voxel_value = get_vox_data(data.render_root, cell);
+        if (voxel_value != 0u) {
+            var result = RayHit();
             result.hit = true;
+            result.voxel_value = voxel_value;
+            result.normal = normal;
+            result.t = cur_t;
             return result;
         }
         let next_pos = select(
@@ -93,47 +96,16 @@ fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, cells: u32, min_
         );
         let times = (next_pos - pos) * inv_direction;
         let t = min(times.x, min(times.y, times.z));
-        result.normal = select(vec3(0.0), -stepdir, times == vec3<f32>(t));
+        normal = select(vec3(0.0), -stepdir, times == vec3<f32>(t));
         
         pos += direction * t + epsilon * stepdir;
+        cur_t += t;
     }
 
+    var result = RayHit();
+    result.hit = false;
     return result;
 }
-
-// fn impr_march(camera_pos: vec3<f32>, direction: vec3<f32>, grid_size: f32, grid_spacing: f32) -> RayHit {
-//     let step = vec3<i32>(sign(direction));
-//     let epsilon = 0.00001;
-//     let step_t = abs(grid_spacing / direction);
-//     let tMin = select(0.0 - camera_pos, grid_size - camera_pos, direction < vec3(0.0)) / direction + epsilon * vec3<f32>(step);
-//     let tEntry = max(max(tMin.x, tMin.y), tMin.z);
-//     let entry_pos = camera_pos + direction * max(0.0, tEntry);
-
-//     var cur_voxel = vec3<i32>(floor(entry_pos / grid_spacing));
-//     let next_walls = vec3<f32>(cur_voxel + step) * grid_spacing;
-//     var marched_t = (next_walls - entry_pos) / direction;
-
-//     let max_steps = 100;
-//     for (var i = 0; i < max_steps; i++) {
-//         // if (!within3i(cur_voxel, i32(grid_size))) { break; }
-//         let min_t = min(marched_t.x, min(marched_t.y, marched_t.z));
-//         let mask = vec3<f32>(vec3<f32>(min_t) == marched_t);
-//         cur_voxel += step * vec3<i32>(mask);
-//         marched_t += step_t * mask;
-//         let cur_voxel_value = get_vox_data(data.render_root, vec3<u32>(cur_voxel));
-//         if (cur_voxel_value > 0u) {
-//             var result: RayHit;
-//             result.hit = true;
-//             result.normal = vec3<f32>(-step) * mask;
-//             result.voxel_value = cur_voxel_value;
-//             return result;
-//         }
-//     }
-
-//     var result: RayHit;
-//     result.hit = false;
-//     return result;
-// }
 
 // Camera is passed in with it's origin on the center of the voxel grid
 @fragment
@@ -144,8 +116,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let bounds = vec3(f32(cells) * min_cell);
 
     let aspect = data.resolution.x / data.resolution.y;
-    // Transform from <0,1> to <-0.5, 0.5> then scale by aspect ratio
-    let uv = (in.texcoord - 0.5) * vec2<f32>(aspect, 1.0);
+    // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
+    let uv = 2.0 * (in.texcoord - 0.5) * vec2<f32>(aspect, 1.0);
     
     let camera_pos = data.camera_pos;
     let forward = data.camera_dir;
@@ -161,13 +133,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let hit = raymarch_voxels(
         camera_pos, 
         ray_dir, 
-        cells,
+        bounds,
         min_cell,
     );
     
     if (hit.hit) {
+        let hit_pos = camera_pos + ray_dir * hit.t;
+        let percent_of_block = fract(hit_pos / min_cell);
         // Base color from normal
-        let normal_color = hit.normal * 0.5 + 0.5;
+        
+        let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
         
         // Slightly vary color based on normal to help distinguish faces
         let normal_influence = abs(hit.normal) * 0.3;
@@ -176,7 +151,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             0.5 + normal_influence.x * 0.2, 
             0.4 + normal_influence.y * 0.3
         );
-        return vec4<f32>(voxel_id_color, 1.0);
+        let color = mix(voxel_id_color, per_color, vec3(0.5));
+        return vec4<f32>(color, 1.0);
     } else {
         // Grid visualization in the background
         // Project ray to the grid plane (y = 0)
