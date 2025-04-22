@@ -25,6 +25,8 @@ pub struct App<'window> {
     
     // Timing
     last_update: Instant,
+    frame_times: Vec<f32>,
+    fps_update_timer: f32,
 }
 
 impl<'window> Default for App<'window> {
@@ -38,6 +40,8 @@ impl<'window> Default for App<'window> {
             mouse_buttons_pressed: Vec::new(),
             mouse_captured: false,
             last_update: Instant::now(),
+            frame_times: Vec::with_capacity(100),
+            fps_update_timer: 0.0,
         }
     }
 }
@@ -76,6 +80,10 @@ impl<'window> ApplicationHandler for App<'window> {
             WindowEvent::RedrawRequested => {
                 // Update camera based on input
                 self.tick_camera();
+                
+                // Update window title with FPS
+                self.update_window_title();
+                
                 self.wgpu_ctx.get_mut().unwrap().draw(&self.camera);
                 self.window.get().unwrap().request_redraw();
             },
@@ -117,7 +125,35 @@ impl<'window> ApplicationHandler for App<'window> {
     }
 }
 
-impl<'window> App<'window> {
+impl<'window> App<'window> {    
+    fn update_frame_times(&mut self, dt: f32) {
+        // Store frame time
+        self.frame_times.push(dt);
+        if self.frame_times.len() > 100 {
+            self.frame_times.remove(0);
+        }
+        
+        // Update FPS display every 0.5 seconds
+        self.fps_update_timer += dt;
+    }
+    
+    fn update_window_title(&mut self) {
+        // Only update the title periodically to avoid performance impact
+        if self.fps_update_timer >= 0.5 {
+            self.fps_update_timer = 0.0;
+            
+            // Calculate average FPS from stored frame times
+            if !self.frame_times.is_empty() {
+                let avg_frame_time: f32 = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
+                let fps = 1.0 / avg_frame_time;
+                
+                // Update window title with FPS
+                if let Some(window) = self.window.get() {
+                    window.set_title(&format!("Voxel - FPS: {:.1}", fps));
+                }
+            }
+        }
+    }
     fn toggle_mouse_capture(&mut self) {
         let window = self.window.get().unwrap();
         let new_mode = if self.mouse_captured {
@@ -135,6 +171,9 @@ impl<'window> App<'window> {
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
         if dt > 0.1 { return }
+        
+        // Update frame time history for FPS calculation
+        self.update_frame_times(dt);
         
         // Update camera rotation based on mouse
         if self.mouse_captured && self.mouse_delta != Vec2::ZERO {
