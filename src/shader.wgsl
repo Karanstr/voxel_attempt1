@@ -36,11 +36,6 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-fn is_inf(val: f32) -> bool {
-    let zero = f32(0.0);
-    return abs(val) == f32(1.0) / zero;
-}
-
 // Ray hit information
 struct RayHit {
     hit: bool,
@@ -64,46 +59,81 @@ fn get_vox_data(root: vec2<u32>, cell: vec3<u32>) -> u32 {
     return cur_index;
 }
 
-fn raymarch_voxels(camera_pos: vec3<f32>, direction: vec3<f32>, bounds: vec3<f32>, min_cell: f32) -> RayHit {
-    let epsilon = 0.00001;
-    let inv_direction = 1.0 / direction;
-
-    let tMin = select(0.0 - camera_pos, bounds - camera_pos, direction < vec3(0.0)) * inv_direction;
-    let tEntry = max(max(tMin.x, tMin.y), tMin.z);
-    let initial_t = max(0.0, tEntry + epsilon);
-    var pos = camera_pos + direction * initial_t;
-    let stepdir = sign(direction);
-    
-    var normal = select(vec3(0.0), -stepdir, tMin == vec3<f32>(tEntry));
-    var cur_t = initial_t;
-    let max_steps = 100;
-    for (var i = 0; i < max_steps; i++) {
-        if (any(clamp(pos, vec3(0.0), bounds) != pos)) { break; }
-        let cell = vec3<u32>(floor(pos / min_cell));
-        let voxel_value = get_vox_data(data.render_root, cell);
-        if (voxel_value != 0u) {
-            var result = RayHit();
-            result.hit = true;
-            result.voxel_value = voxel_value;
-            result.normal = normal;
-            result.t = cur_t;
-            return result;
-        }
-        let next_pos = select(
-            select(ceil(pos), floor(pos), stepdir < vec3(0.0)),
-            pos,
-            stepdir == vec3(0.0)
-        );
-        let times = (next_pos - pos) * inv_direction;
-        let t = min(times.x, min(times.y, times.z));
-        normal = select(vec3(0.0), -stepdir, times == vec3<f32>(t));
-        
-        pos += direction * t + epsilon * stepdir;
-        cur_t += t;
-    }
-
+fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
+    // Initialize result
     var result = RayHit();
     result.hit = false;
+    // We only march through grids for now, not into them.
+    if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { 
+        return result;
+    }
+    let min_cell = 1.0;
+    let cell_bounds = vec3<i32>(bounds / min_cell);
+    let origin = camera_pos / min_cell;
+    
+    // Current voxel cell
+    var cur_voxel = vec3<i32>(floor(origin));
+    
+    // Direction to step in the grid (either 1, 0, or -1 for each axis)
+    let step = vec3<i32>(sign(dir));
+    
+    // Handle zero components in direction to avoid division by zero
+    let safe_dir = select(dir, vec3<f32>(0.0001), abs(dir) < vec3<f32>(0.0001));
+    
+    // Calculate inverse of direction for faster calculations
+    let inv_dir = 1.0 / safe_dir;
+    
+    var t_max = select(
+        select(
+            (ceil(origin) - origin) * inv_dir,
+            (floor(origin) - origin) * inv_dir,
+            step < vec3<i32>(0)
+        ),
+        vec3<f32>(1000000.0),
+        step == vec3<i32>(0)
+    );
+    
+    // Distance between voxel boundaries
+    let t_delta = abs(inv_dir);
+    
+    // Current distance along ray
+    var t = 0.0;
+    
+    // Face normal
+    var normal = vec3<f32>(0.0);
+    
+    // Main DDA loop
+    for (var i = 0u; i < 100u; i++) {
+        // Check current voxel
+        let cur_val = get_vox_data(data.render_root, vec3<u32>(cur_voxel));
+        
+        if (cur_val != 0u) {
+            // We hit a voxel
+            result.hit = true;
+            result.voxel_value = cur_val;
+            result.normal = normal;
+            result.t = t;
+            return result;
+        }
+        
+        let min_t = min(min(t_max.x, t_max.y), t_max.z);
+        let mask = select(
+            vec3<f32>(0.0),
+            vec3<f32>(1.0),
+            t_max == vec3<f32>(min_t)
+        );
+        cur_voxel += step * vec3<i32>(mask);
+        t = min_t;
+        t_max += t_delta * mask;
+        normal = mask;
+        
+        // Check if we've gone outside the bounds
+        if (any(clamp(cur_voxel, vec3<i32>(0), cell_bounds) != cur_voxel)) {
+            break;
+        }
+    }
+    
+    // No hit found
     return result;
 }
 
@@ -113,6 +143,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let cells = 1u << data.render_root[1];
     // Lowest voxel size
     let min_cell = 1.0;
+    // 0,0 Bottom Right ->  cells * cell_length Top Left
     let bounds = vec3(f32(cells) * min_cell);
 
     let aspect = data.resolution.x / data.resolution.y;
@@ -130,11 +161,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // We don't need to normalize this, all we care about is the ratio
     let ray_dir = forward + right * uv.x * tan(fov_rad) + camera_up * uv.y * tan(fov_rad);
     
-    let hit = raymarch_voxels(
+    let hit = dda_vox(
         camera_pos, 
         ray_dir, 
         bounds,
-        min_cell,
     );
     
     if (hit.hit) {
