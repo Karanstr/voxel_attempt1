@@ -19,6 +19,8 @@ struct VoxelNode {
 @group(0) @binding(1)
 var<storage> voxels: array<VoxelNode>;
 
+const MIN_BLOCK_SIZE: f32 = 1.0;
+
 // Vertex shader
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -59,20 +61,17 @@ fn get_vox_data(root: vec2<u32>, cell: vec3<u32>) -> u32 {
     return cur_index;
 }
 
+// Assumes camera_pos has been normalized by min_cell
 fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     // Initialize result
     var result = RayHit();
     result.hit = false;
     // We only march through grids for now, not into them.
-    if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { 
-        return result;
-    }
-    let min_cell = 1.0;
-    let cell_bounds = vec3<i32>(bounds / min_cell);
-    let origin = camera_pos / min_cell;
+    if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { return result; }
+    let cell_bounds = vec3<i32>(bounds);
     
     // Current voxel cell
-    var cur_voxel = vec3<i32>(floor(origin));
+    var cur_voxel = vec3<i32>(floor(camera_pos));
     
     // Direction to step in the grid (either 1, 0, or -1 for each axis)
     let step = vec3<i32>(sign(dir));
@@ -85,8 +84,8 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     
     var t_max = select(
         select(
-            (ceil(origin) - origin) * inv_dir,
-            (floor(origin) - origin) * inv_dir,
+            (ceil(camera_pos) - camera_pos) * inv_dir,
+            (floor(camera_pos) - camera_pos) * inv_dir,
             step < vec3<i32>(0)
         ),
         vec3<f32>(1000000.0),
@@ -107,7 +106,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
         // Check current voxel
         let cur_val = get_vox_data(data.render_root, vec3<u32>(cur_voxel));
         
-        if (cur_val != 0u) {
+        if (cur_val != 0u && t != 0.0) {
             // We hit a voxel
             result.hit = true;
             result.voxel_value = cur_val;
@@ -142,46 +141,50 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let cells = 1u << data.render_root[1];
     // Lowest voxel size
-    let min_cell = 1.0;
     // 0,0 Bottom Right ->  cells * cell_length Top Left
-    let bounds = vec3(f32(cells) * min_cell);
+    let bounds = vec3<f32>(f32(cells));
 
     let aspect = data.resolution.x / data.resolution.y;
     // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
     let uv = 2.0 * (in.texcoord - 0.5) * vec2<f32>(aspect, 1.0);
     
-    let camera_pos = data.camera_pos;
+    let camera_pos = data.camera_pos / MIN_BLOCK_SIZE;
     let forward = data.camera_dir;
 
     let up = vec3<f32>(0.0, 1.0, 0.0);
     let right = normalize(cross(forward, up));
     let camera_up = normalize(cross(right, forward));
     
-    let fov_rad = 1.;
+    let tan_fov = tan(1.0);
+
     // We don't need to normalize this, all we care about is the ratio
-    let ray_dir = forward + right * uv.x * tan(fov_rad) + camera_up * uv.y * tan(fov_rad);
+    let ray_dir = forward + right * uv.x * tan_fov + camera_up * uv.y * tan_fov;
     
     let hit = dda_vox(
         camera_pos, 
         ray_dir, 
-        bounds,
+        bounds
     );
     
     if (hit.hit) {
         let hit_pos = camera_pos + ray_dir * hit.t;
-        let percent_of_block = fract(hit_pos / min_cell);
+        let percent_of_block = fract(hit_pos);
+
+        let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(0.99)));
+        let edge_count = near_edge.x + near_edge.y + near_edge.z;
+        if (edge_count >= 2) { return vec4<f32>(0.0); }
+
         // Base color from normal
-        
         let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
         
-        // Slightly vary color based on normal to help distinguish faces
+        // Vary color based on normal to help distinguish faces
         let normal_influence = abs(hit.normal) * 0.3;
         let voxel_id_color = vec3<f32>(
             0.8 - normal_influence.z * 0.2, 
             0.5 + normal_influence.x * 0.2, 
             0.4 + normal_influence.y * 0.3
         );
-        let color = mix(voxel_id_color, per_color, vec3(0.5));
+        var color = mix(voxel_id_color, per_color, vec3(0.5));
         return vec4<f32>(color, 1.0);
     } else {
         // Grid visualization in the background
@@ -195,8 +198,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
              && clamp(hit_pos.z, 0.0, bounds.z) == hit_pos.z) {
                 
                 // Draw grid lines
-                let cell_x = fract(hit_pos.x / min_cell);
-                let cell_z = fract(hit_pos.z / min_cell);
+                let cell_x = fract(hit_pos.x);
+                let cell_z = fract(hit_pos.z);
                 
                 let line_width = 0.05;
                 if (cell_x < line_width || cell_x > 1.0 - line_width || 
