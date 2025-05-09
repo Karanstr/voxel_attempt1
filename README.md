@@ -1,2 +1,3 @@
 # voxel_attempt1
-Trying to move my grid datastructure into 3d and raymarch it.
+Writing a 3D raymarched Voxel Engine (how original, I know)
+We'll see how far it goes
