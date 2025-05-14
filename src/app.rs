@@ -166,7 +166,7 @@ impl<'window> App<'window> {
         }
         if !self.keys_pressed.is_empty() {
             let camera_speed = 5.0 * dt;
-            let forward = self.camera.forward();
+            let forward = self.camera.forward().with_y(0.0);
             let right = forward.cross(Vec3::Y).normalize();
             let mut displacement = Vec3::ZERO;
             if self.keys_pressed.contains(&KeyCode::KeyW) {
@@ -187,8 +187,7 @@ impl<'window> App<'window> {
             if self.keys_pressed.contains(&KeyCode::ShiftLeft) {
                 displacement -= Vec3::Y;
             }
-            
-            self.camera.translate(displacement * camera_speed);
+            self.camera.translate(displacement.normalize_or_zero() * camera_speed);
         }
     }
 
