@@ -88,6 +88,7 @@ impl<'window> ApplicationHandler for App<'window> {
                 self.window.get().unwrap().request_redraw();
             },
             WindowEvent::KeyboardInput { event, .. } => {
+                if !self.mouse_captured { return }
                 if let PhysicalKey::Code(key_code) = event.physical_key {
                     match event.state {
                         ElementState::Pressed => {
