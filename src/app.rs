@@ -1,6 +1,5 @@
 use crate::graph::sdg::SparseDirectedGraph;
 use crate::wgpu_ctx::WgpuCtx;
-// use crate::wgpu_ctx::VoxelWorld;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -11,6 +10,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 use glam::{Vec2, Vec3};
 use crate::camera::Camera;
 use std::cell::OnceCell;
+use std::collections::VecDeque;
 
 pub struct App<'window> {
     window: OnceCell<Arc<Window>>,
@@ -25,7 +25,7 @@ pub struct App<'window> {
     
     // Timing
     last_update: Instant,
-    frame_times: Vec<f32>,
+    frame_times: VecDeque<f32>,
     fps_update_timer: f32,
 }
 
@@ -40,8 +40,9 @@ impl<'window> Default for App<'window> {
             mouse_buttons_pressed: Vec::new(),
             mouse_captured: false,
             last_update: Instant::now(),
-            frame_times: Vec::with_capacity(100),
+            frame_times: VecDeque::with_capacity(100),
             fps_update_timer: 0.0,
+
         }
     }
 }
@@ -88,7 +89,6 @@ impl<'window> ApplicationHandler for App<'window> {
                 self.window.get().unwrap().request_redraw();
             },
             WindowEvent::KeyboardInput { event, .. } => {
-                if !self.mouse_captured { return }
                 if let PhysicalKey::Code(key_code) = event.physical_key {
                     match event.state {
                         ElementState::Pressed => {
@@ -127,32 +127,17 @@ impl<'window> ApplicationHandler for App<'window> {
 }
 
 impl<'window> App<'window> {    
-    fn update_frame_times(&mut self, dt: f32) {
-        // Store frame time
-        self.frame_times.push(dt);
-        if self.frame_times.len() > 100 {
-            self.frame_times.remove(0);
-        }
-        
-        // Update FPS display every 0.5 seconds
+    fn store_frame_time(&mut self, dt: f32) {
+        if self.frame_times.len() == 100 { self.frame_times.pop_front(); }
+        self.frame_times.push_back(dt);
         self.fps_update_timer += dt;
     }
     
     fn update_window_title(&mut self) {
-        // Only update the title periodically to avoid performance impact
-        if self.fps_update_timer >= 0.5 {
+        if self.fps_update_timer >= 1.0 {
             self.fps_update_timer = 0.0;
-            
-            // Calculate average FPS from stored frame times
-            if !self.frame_times.is_empty() {
-                let avg_frame_time: f32 = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
-                let fps = 1.0 / avg_frame_time;
-                
-                // Update window title with FPS
-                if let Some(window) = self.window.get() {
-                    window.set_title(&format!("Voxel - FPS: {:.1}", fps));
-                }
-            }
+            let fps = self.frame_times.len() as f32 / self.frame_times.iter().sum::<f32>();
+            println!("FPS: {:.1}", fps);
         }
     }
     fn toggle_mouse_capture(&mut self) {
@@ -167,22 +152,18 @@ impl<'window> App<'window> {
     }
     
     fn tick_camera(&mut self) {
-        // Get time delta
         let now = Instant::now();
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
         if dt > 0.1 { return }
         
-        // Update frame time history for FPS calculation
-        self.update_frame_times(dt);
-        
-        // Update camera rotation based on mouse
-        if self.mouse_captured && self.mouse_delta != Vec2::ZERO {
+        self.store_frame_time(dt);
+        // Camera should only move if mouse is captured
+        if !self.mouse_captured { return }
+        if self.mouse_delta != Vec2::ZERO {
             self.camera.rotate(self.mouse_delta, 0.1);
             self.mouse_delta = Vec2::ZERO;
         }
-        
-        // Update camera position based on keyboard
         if !self.keys_pressed.is_empty() {
             let camera_speed = 5.0 * dt;
             let forward = self.camera.forward();
