@@ -20,6 +20,7 @@ struct VoxelNode {
 var<storage> voxels: array<VoxelNode>;
 
 const MIN_BLOCK_SIZE: f32 = 1.0;
+const FP_BUMP: f32 = 0.0001; 
 
 // Vertex shader
 struct VertexInput {
@@ -69,7 +70,6 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     // We only march through grids for now, not into them.
     if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { return result; }
     let cell_bounds = vec3<i32>(bounds);
-    
     // Current voxel cell
     var cur_voxel = vec3<i32>(floor(camera_pos));
     
@@ -77,14 +77,15 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     let step = vec3<i32>(sign(dir));
     
     // Handle zero components in direction to avoid division by zero
-    let safe_dir = select(dir, vec3<f32>(0.0001), abs(dir) < vec3<f32>(0.0001));
+    let safe_dir = select(dir, vec3<f32>(FP_BUMP), abs(dir) < vec3<f32>(FP_BUMP));
     
     // Calculate inverse of direction for faster calculations
     let inv_dir = 1.0 / safe_dir;
     
+
     var t_max = select(
         select(
-            (ceil(camera_pos) - camera_pos) * inv_dir,
+            (ceil(camera_pos + FP_BUMP) - camera_pos) * inv_dir,
             (floor(camera_pos) - camera_pos) * inv_dir,
             step < vec3<i32>(0)
         ),
@@ -122,7 +123,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
             t_max == vec3<f32>(min_t)
         );
         cur_voxel += step * vec3<i32>(mask);
-        t = min_t;
+        t = min_t + 0.001; // ?????
         t_max += t_delta * mask;
         normal = mask;
         
