@@ -85,6 +85,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
 
     var t_max = select(
         select(
+                              // This bump fixes #3, not quite sure why, maybe I'll figure it out
             (ceil(camera_pos + FP_BUMP) - camera_pos) * inv_dir,
             (floor(camera_pos) - camera_pos) * inv_dir,
             step < vec3<i32>(0)
@@ -123,7 +124,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
             t_max == vec3<f32>(min_t)
         );
         cur_voxel += step * vec3<i32>(mask);
-        t = min_t + 0.001; // ?????
+        t = min_t + FP_BUMP;
         t_max += t_delta * mask;
         normal = mask;
         
