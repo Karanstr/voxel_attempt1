@@ -1,5 +1,6 @@
 use crate::graph::sdg::SparseDirectedGraph;
 use crate::wgpu_ctx::WgpuCtx;
+use crate::camera::Camera;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -8,22 +9,24 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 use glam::{Vec2, Vec3};
-use crate::camera::Camera;
 use std::cell::OnceCell;
 use std::collections::VecDeque;
 
 pub struct App<'window> {
+    // Windowing
     window: OnceCell<Arc<Window>>,
     wgpu_ctx: OnceCell<WgpuCtx<'window>>,
+
+    // Gamedata
     camera: Camera,
     
-    // Input state
+    // Input
     keys_pressed: Vec<KeyCode>,
     mouse_delta: Vec2,
     mouse_buttons_pressed: Vec<MouseButton>,
     mouse_captured: bool,
     
-    // Timing
+    // Frame Timing
     last_update: Instant,
     frame_times: VecDeque<f32>,
     fps_update_timer: f32,
@@ -42,18 +45,18 @@ impl<'window> Default for App<'window> {
             last_update: Instant::now(),
             frame_times: VecDeque::with_capacity(100),
             fps_update_timer: 0.0,
-
         }
     }
 }
 
 impl<'window> ApplicationHandler for App<'window> {
+    // Create (or re-acquire) window and wgpu_ctx
+    // Requests redraw
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = self.window.get_or_init(|| {
-            let win_attr = Window::default_attributes().with_title("Voxel");
-            Arc::new(event_loop.create_window(win_attr)
-                .expect("Failed to construct the window (app.rs)")
-            )
+            Arc::new(event_loop.create_window(
+                Window::default_attributes().with_title("Voxel")
+            ).expect("Failed to construct the window (app.rs)"))
         });
         self.wgpu_ctx.get_or_init(|| {
             WgpuCtx::new(window.clone(), SparseDirectedGraph::new(4))
@@ -64,13 +67,15 @@ impl<'window> ApplicationHandler for App<'window> {
 
     // Cursor is locked, so we need to acquire mouse motion directly
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: winit::event::DeviceId, event: winit::event::DeviceEvent) {
+        // Don't trigger any device events  unless mouse is locked
         if !self.mouse_captured { return }
         if let DeviceEvent::MouseMotion { delta } = event {
             self.mouse_delta.x += delta.0 as f32;
             self.mouse_delta.y += delta.1 as f32;
         }
     }
-
+    
+    // This function shouldn't perform any advanced logic, simply act as a passthrough for data? 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -81,11 +86,11 @@ impl<'window> ApplicationHandler for App<'window> {
             WindowEvent::RedrawRequested => {
                 // Update camera based on input
                 self.tick_camera();
+                self.display_fps(1.);
                 
-                // Update window title with FPS
-                self.update_window_title();
-                
+                // Draw to frame buffer(?)
                 self.wgpu_ctx.get_mut().unwrap().draw(&self.camera);
+                // Push framebuffer to screen(?)
                 self.window.get().unwrap().request_redraw();
             },
             WindowEvent::KeyboardInput { event, .. } => {
@@ -97,13 +102,12 @@ impl<'window> ApplicationHandler for App<'window> {
                             }
                             
                             // Toggle mouse capture with Escape key
+                            // Not a huge fan of handling these key presses in two different places..
                             if key_code == KeyCode::Escape {
                                 self.toggle_mouse_capture();
                             }
                         },
-                        ElementState::Released => {
-                            self.keys_pressed.retain(|&k| k != key_code);
-                        },
+                        ElementState::Released => self.keys_pressed.retain(|&k| k != key_code),
                     }
                 }
             },
@@ -114,6 +118,7 @@ impl<'window> ApplicationHandler for App<'window> {
                             self.mouse_buttons_pressed.push(button);
                         }
                         // Capture cursor on left click
+                        // Same as escape, I don't like the dual processing and plan to create specific functions to handle them.
                         if button == MouseButton::Left && !self.mouse_captured {
                             self.toggle_mouse_capture();
                         }
@@ -133,18 +138,16 @@ impl<'window> App<'window> {
         self.fps_update_timer += dt;
     }
     
-    fn update_window_title(&mut self) {
-        if self.fps_update_timer >= 1.0 {
+    fn display_fps(&mut self, time_since_last: f32) {
+        if self.fps_update_timer >= time_since_last {
             self.fps_update_timer = 0.0;
-            let fps = self.frame_times.len() as f32 / self.frame_times.iter().sum::<f32>();
-            println!("FPS: {:.1}", fps);
+            println!("FPS: {:.1}", self.frame_times.len() as f32 / self.frame_times.iter().sum::<f32>());
         }
     }
+
     fn toggle_mouse_capture(&mut self) {
         let window = self.window.get().unwrap();
-        let new_mode = if self.mouse_captured {
-            CursorGrabMode::None
-        } else { CursorGrabMode::Locked };
+        let new_mode = if self.mouse_captured { CursorGrabMode::None } else { CursorGrabMode::Locked };
         if window.set_cursor_grab(new_mode).is_ok() {
             window.set_cursor_visible(self.mouse_captured);
             self.mouse_captured = !self.mouse_captured;
@@ -158,7 +161,7 @@ impl<'window> App<'window> {
         if dt > 0.1 { return }
         
         self.store_frame_time(dt);
-        // Camera should only move if mouse is captured
+        // Player controls should only work while mouse is captured
         if !self.mouse_captured { return }
         if self.mouse_delta != Vec2::ZERO {
             self.camera.rotate(self.mouse_delta, 0.1);
@@ -169,6 +172,7 @@ impl<'window> App<'window> {
             let forward = self.camera.forward().with_y(0.0);
             let right = forward.cross(Vec3::Y).normalize();
             let mut displacement = Vec3::ZERO;
+            // This feels like a really silly way to key lookups when a hashmap would prob be better..
             if self.keys_pressed.contains(&KeyCode::KeyW) {
                 displacement += forward;
             }

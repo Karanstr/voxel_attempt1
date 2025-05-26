@@ -6,6 +6,32 @@ use crate::camera::Camera;
 use crate::graph::basic_node3d::{BasicNode3d, BasicPath3d};
 use crate::graph::sdg::*;
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    tex_coords: [f32; 2],
+}
+impl Vertex {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        }
+    }
+}
 // Data required to create buffers for full screen quad
 const FULL_SCREEN_INDICIES: [u16; 6] = [0, 1, 2, 0, 2, 3];
 const VERTICES : [Vertex; 4] = [
@@ -44,33 +70,6 @@ impl Data {
     }
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
-}
-impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
-        }
-    }
-}
-
 pub struct WgpuCtx<'window> {
     surface: wgpu::Surface<'window>,
     surface_config: wgpu::SurfaceConfiguration,
@@ -93,16 +92,12 @@ pub struct WgpuCtx<'window> {
 impl<'window> WgpuCtx<'window> {
     pub async fn new_async(window: Arc<Window>, sdg: SparseDirectedGraph<BasicNode3d>, render_root: Pointer) -> WgpuCtx<'window> {
         let instance = wgpu::Instance::default();
-        let surface = instance.create_surface(Arc::clone(&window)).unwrap();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                // Request an adapter which can render to our surface
-                compatible_surface: Some(&surface),
-            })
-            .await
-            .expect("Failed to find an appropriate adapter");
+        let surface = instance.create_surface(Arc::clone(&window)).expect("Failed to create surface from window!");
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+        }).await.expect("Failed to find an appropriate adapter");
         // Create the logical device and command queue
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -126,6 +121,8 @@ impl<'window> WgpuCtx<'window> {
         let surface_config = surface.get_default_config(&adapter, width, height).unwrap();
         surface.configure(&device, &surface_config);
         
+        // --- CHECKPOINT ---
+
         // Load the shader from disk
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),

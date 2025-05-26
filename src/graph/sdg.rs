@@ -105,7 +105,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
         mut old_parent: Index,
     ) -> Result<(Index, Pointer, Option<T>), AccessError> {
         for cur_depth in (0 .. path.len()).rev() {
-            //Trailing off early means we're at a leaf, we can just repeat that leaf and get sparsity by default
+            // Trailing off early means we're at a leaf, we can just repeat that leaf and get sparsity by default
             old_parent = if cur_depth < trail.len() { trail[cur_depth] } else { *trail.last().unwrap() };
             let new_parent_node =  {
                 let mut new_parent = self.node(old_parent)?.clone();
