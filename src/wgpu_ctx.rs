@@ -8,7 +8,8 @@ use crate::app::GameData;
 const DOWNSCALE: u32 = 1;
 const WORKGROUP_SQUARE: u32 = 8;
 
-#[repr(C, align(16))]
+// Remember that vec3's are extended to 16 bytes
+#[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Data {
     render_root: [u32; 2],
