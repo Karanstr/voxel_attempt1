@@ -19,6 +19,7 @@ const UPSCALE = 1;
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
   let uv = frag_coord.xy / (vec2<f32>(textureDimensions(my_texture)) * UPSCALE);
-  return textureSample(my_texture, my_sampler, uv);
+  let flipped_uv = vec2<f32>(uv.x, 1.0 - uv.y);
+  return textureSample(my_texture, my_sampler, flipped_uv);
 }
 

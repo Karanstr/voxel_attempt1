@@ -29,7 +29,7 @@ impl Data {
       camera_dir: camera_dir.into(),
       padding3: 0.,
     }
-  }
+  } 
 }
 impl Default for Data {
   fn default() -> Self {
@@ -127,7 +127,7 @@ impl<'window> WgpuCtx<'window> {
           binding: 2, 
           visibility: wgpu::ShaderStages::COMPUTE,
           ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
             has_dynamic_offset: false,
             min_binding_size: None,
           },
