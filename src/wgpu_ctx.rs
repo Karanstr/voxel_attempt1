@@ -1,9 +1,8 @@
 use std::sync::Arc;
-use wgpu::{util::DeviceExt, MemoryHints::Performance, PipelineCompilationOptions, Trace};
+use wgpu::{util::DeviceExt, PipelineCompilationOptions};
 use winit::window::Window;
-use glam::{Mat4, UVec3};
 use crate::app::GameData;
-use crate::graph::basic_node3d::{BasicNode3d, BasicPath3d};
+use crate::graph::basic_node3d::BasicNode3d;
 use crate::graph::sdg::*;
 
 #[repr(C)]
@@ -50,19 +49,33 @@ struct Data {
   camera_pos: [f32; 3],
   padding1: f32,
   camera_dir: [f32; 3],
-  voxel_count: u32,
+  padding2: f32,
 }
+// We align every 16 bytes, padding to make sure everything lines up correctly.
+// This is forced because of the way Vec3 alignments work in wgsl
 impl Data {
-  fn new(projection: Mat4, resolution: [f32; 2], render_root: [u32; 2], voxel_count: u32) -> Self {
+  fn new(projection: glam::Mat4, resolution: [f32; 2], render_root: [u32; 2], camera_pos: [f32; 3], camera_dir: [f32; 3]) -> Self {
     Self {
-      model: Mat4::IDENTITY.to_cols_array_2d(),
+      model: glam::Mat4::IDENTITY.to_cols_array_2d(),
       projection: projection.to_cols_array_2d(),
       resolution,
       render_root,
-      camera_pos: [4.0, 4.0, 12.0],
+      camera_pos,
       padding1: 0.0,
-      camera_dir: [4.0, 4.0, 0.0],
-      voxel_count,
+      camera_dir,
+      padding2: 0.0
+    }
+  }
+  fn dummy() -> Self {
+    Self {
+      model: [[0.0; 4]; 4],
+      projection: [[0.0; 4]; 4],
+      resolution: [0.0; 2],
+      render_root: [0; 2],
+      camera_pos: [0.0; 3],
+      padding1: 0.0,
+      camera_dir: [0.0; 3],
+      padding2: 0.0,
     }
   }
 }
@@ -70,8 +83,6 @@ impl Data {
 pub struct WgpuCtx<'window> {
   surface: wgpu::Surface<'window>,
   surface_config: wgpu::SurfaceConfiguration,
-  // We don't need to bind this, but it does need to be constructed.
-  // adapter: wgpu::Adapter,
   device: wgpu::Device,
   queue: wgpu::Queue,
   render_pipeline: wgpu::RenderPipeline,
@@ -85,7 +96,8 @@ pub struct WgpuCtx<'window> {
 impl<'window> WgpuCtx<'window> {
   pub async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
     let instance = wgpu::Instance::default();
-    let surface = instance.create_surface(Arc::clone(&window)).expect("Failed to create surface from window!");
+    let surface = instance.create_surface(Arc::clone(&window))
+      .expect("Failed to create surface from window!");
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
       power_preference: wgpu::PowerPreference::default(),
       force_fallback_adapter: false,
@@ -95,16 +107,10 @@ impl<'window> WgpuCtx<'window> {
     let (device, queue) = adapter.request_device(
       &wgpu::DeviceDescriptor {
         label: None,
-        // Request the storage buffer feature
-        required_features: wgpu::Features::VERTEX_WRITABLE_STORAGE | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,
-        // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-        required_limits: wgpu::Limits {
-          max_storage_buffers_per_shader_stage: 8,
-          max_storage_buffer_binding_size: 1024 * 1024, // 1MB should be more than enough
-          ..wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
-        },
-        memory_hints: Performance,
-        trace: Trace::Off,
+        required_features: wgpu::Features::default(),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
       },
     ).await.expect("Failed to create device");
 
@@ -134,17 +140,13 @@ impl<'window> WgpuCtx<'window> {
       }
     );
 
-    // Create uniform buffer for camera and scene data
-    // WHY ARE WE FILLING THE BUFFER WITH ACTUAL DATA
+    // Create uniform buffer for camera and scene data, filling it with dummy data
+    // Yes we could go and just set contents: [0.0; buffersize], but that silently fails as soon as
+    // I change Data and I'd rather a loud failure
     let data_buffer = device.create_buffer_init(
       &wgpu::util::BufferInitDescriptor {
         label: Some("Data Buffer"),
-        contents: bytemuck::cast_slice(&[Data::new(
-            Mat4::IDENTITY,
-            [width as f32, height as f32],
-            [0, 0],
-            0, // Temporary value, we'll change it when we update()
-        )]),
+        contents: bytemuck::cast_slice(&[Data::dummy()]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       }
     );
@@ -159,7 +161,6 @@ impl<'window> WgpuCtx<'window> {
     );
 
     // Creates a blueprint
-    // NEEDS CHANGING FOR COMPUTE
     let bind_group_layout = device.create_bind_group_layout(
       &wgpu::BindGroupLayoutDescriptor {
         entries: &[
@@ -297,74 +298,55 @@ impl<'window> WgpuCtx<'window> {
     );
   }
 
-  // Instead of reinitializing the entire DATA & VOXEL struct every draw call, why don't we
-  // create dedicated update functions??
   pub fn draw(&mut self, game_data: &GameData) {
-    let camera = &game_data.camera;
-    // Get projection matrix from camera
     let grid_origin = glam::Vec3::new(0.0, 0.0, 0.0);
-    let proj = camera.projection_matrix();
 
     // Update data buffer with new values
-    let mut data = Data::new(
-      proj,
+    let data = Data::new(
+      game_data.camera.projection_matrix(),
       [self.surface_config.width as f32, self.surface_config.height as f32],
       [game_data.render_root.idx, game_data.render_root.height],
-      game_data.sdg.nodes.data().len() as u32
+      (game_data.camera.position() - grid_origin).into(),
+      game_data.camera.forward().into(),
     );
 
     // Update voxel buffer
     let voxels = game_data.sdg.nodes.data().iter().map(|x|
       x.clone().unwrap_or(BasicNode3d::new(&[u32::MAX; 8]))
     ).collect::<Vec<_>>();
+
     self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
-
-    // Update camera position and direction in the data struct
-    data.camera_pos = (camera.position() - grid_origin).into();
-    data.camera_dir = camera.forward().into();
-
     self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
-
+    
+    // Acquires next texture to be drawn to screen
     let surface_texture = self.surface.get_current_texture()
       .expect("Failed to acquire next swap chain texture");
+    // Allows the texture to be run through a render_pass
     let texture_view = surface_texture.texture
       .create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Create a command
     let mut encoder = self.device
       .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    // Fill instructions
-    {
-      // Couldn't tell ya
-      let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("Render Pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-          view: &texture_view,
-          resolve_target: None,
-          ops: wgpu::Operations {
-            load: wgpu::LoadOp::Clear(wgpu::Color {
-              r: 0.0,
-              g: 0.0,
-              b: 0.0,
-              a: 1.0,
-            }),
-            store: wgpu::StoreOp::Store,
-          },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes: None,
-        occlusion_query_set: None,
-      });
-
-      // Tells GPU to use this pipeline
-      render_pass.set_pipeline(&self.render_pipeline);
-
-      // Says we'll be using this bind group
-      render_pass.set_bind_group(0, &self.data_bind_group, &[]);
-      render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-      render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-      render_pass.draw_indexed(0..6, 0, 0..1);
-    }
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+      label: Some("Render Pass"),
+      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        view: &texture_view, // We want to operate on this texture
+        resolve_target: None,
+        ops: wgpu::Operations {
+          load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), // Clear the texture when loaded
+          store: wgpu::StoreOp::Store, // Store output to this texture
+        },
+      })],
+      depth_stencil_attachment: None,
+      timestamp_writes: None,
+      occlusion_query_set: None,
+    });
+    render_pass.set_pipeline(&self.render_pipeline);
+    render_pass.set_bind_group(0, &self.data_bind_group, &[]);
+    render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+    render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+    render_pass.draw_indexed(0..6, 0, 0..1);
+    drop(render_pass);
 
     self.queue.submit(Some(encoder.finish()));
     surface_texture.present();
