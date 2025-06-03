@@ -6,7 +6,7 @@ struct Data {
   camera_pos: vec3<f32>,
   padding1: f32,
   camera_dir: vec3<f32>,
-  voxel_count: f32,
+  padding2: f32,
 }
 
 @group(0) @binding(0)
