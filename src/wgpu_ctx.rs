@@ -1,81 +1,44 @@
 use std::sync::Arc;
-use wgpu::{util::DeviceExt, PipelineCompilationOptions};
+use crate::graph::basic_node3d::BasicNode3d;
+use crate::graph::sdg::Node;
 use winit::window::Window;
 use crate::app::GameData;
-use crate::graph::basic_node3d::BasicNode3d;
-use crate::graph::sdg::*;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-  position: [f32; 3],
-  tex_coords: [f32; 2],
-}
-impl Vertex {
-  fn desc() -> wgpu::VertexBufferLayout<'static> {
-    wgpu::VertexBufferLayout {
-      array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-      step_mode: wgpu::VertexStepMode::Vertex,
-      attributes: &[
-        wgpu::VertexAttribute {
-          offset: 0,
-          shader_location: 0,
-          format: wgpu::VertexFormat::Float32x3,
-        },
-        wgpu::VertexAttribute {
-          offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-          shader_location: 1,
-          format: wgpu::VertexFormat::Float32x2,
-        },
-      ],
-    }
-  }
-}
-// Data required to create buffers for full screen quad
-const FULL_SCREEN_INDICIES: [u16; 6] = [0, 1, 2, 0, 2, 3];
-const VERTICES : [Vertex; 4] = [
-  Vertex { position: [-1.0, -1.0, 0.0], tex_coords: [0.0, 0.0] },
-  Vertex { position: [1.0, -1.0, 0.0], tex_coords: [1.0, 0.0] },
-  Vertex { position: [1.0, 1.0, 0.0], tex_coords: [1.0, 1.0] },
-  Vertex { position: [-1.0, 1.0, 0.0], tex_coords: [0.0, 1.0] },
-];
+// ALWAYS UPDATE CORESPONDING VALUES IN ./render.wgsl and ./compute.wgsl
+const DOWNSCALE: u32 = 1;
+const WORKGROUP_SQUARE: u32 = 8;
+
 #[repr(C, align(16))]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Data {
-  model: [[f32; 4]; 4],
-  projection: [[f32; 4]; 4],
-  resolution: [f32; 2],
-  render_root: [u32; 2],
-  camera_pos: [f32; 3],
-  padding1: f32,
-  camera_dir: [f32; 3],
-  padding2: f32,
+    render_root: [u32; 2],
+    padding1: [u32; 2],
+    camera_pos: [f32; 3],
+    padding2: f32,
+    camera_dir: [f32; 3],
+    padding3: f32,
 }
-// We align every 16 bytes, padding to make sure everything lines up correctly.
-// This is forced because of the way Vec3 alignments work in wgsl
 impl Data {
-  fn new(projection: glam::Mat4, resolution: [f32; 2], render_root: [u32; 2], camera_pos: [f32; 3], camera_dir: [f32; 3]) -> Self {
+    fn new(root_idx:u32, root_height:u32, camera_pos:glam::Vec3, camera_dir: glam::Vec3) -> Self {
     Self {
-      model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-      projection: projection.to_cols_array_2d(),
-      resolution,
-      render_root,
-      camera_pos,
-      padding1: 0.0,
-      camera_dir,
-      padding2: 0.0
+      render_root: [root_idx, root_height],
+      padding1: [0; 2],
+      camera_pos: camera_pos.into(),
+      padding2: 0.,
+      camera_dir: camera_dir.into(),
+      padding3: 0.,
     }
   }
-  fn dummy() -> Self {
+}
+impl Default for Data {
+  fn default() -> Self {
     Self {
-      model: [[0.0; 4]; 4],
-      projection: [[0.0; 4]; 4],
-      resolution: [0.0; 2],
       render_root: [0; 2],
-      camera_pos: [0.0; 3],
-      padding1: 0.0,
-      camera_dir: [0.0; 3],
-      padding2: 0.0,
+      padding1: [0; 2],
+      camera_pos: [0.; 3],
+      padding2: 0.,
+      camera_dir: [0.; 3],
+      padding3: 0.,
     }
   }
 }
@@ -85,256 +48,299 @@ pub struct WgpuCtx<'window> {
   surface_config: wgpu::SurfaceConfiguration,
   device: wgpu::Device,
   queue: wgpu::Queue,
-  render_pipeline: wgpu::RenderPipeline,
-  vertex_buffer: wgpu::Buffer,
-  index_buffer: wgpu::Buffer,
+
   data_buffer: wgpu::Buffer,
   voxel_buffer: wgpu::Buffer,
-  data_bind_group: wgpu::BindGroup,
+
+  compute_bgl: wgpu::BindGroupLayout,
+  compute_pipeline: wgpu::ComputePipeline,
+  compute_bind_group: wgpu::BindGroup,
+  render_bgl: wgpu::BindGroupLayout,
+  render_pipeline: wgpu::RenderPipeline,
+  render_bind_group: wgpu::BindGroup,
+  sampler: wgpu::Sampler,
 }
 
 impl<'window> WgpuCtx<'window> {
+
+  fn new_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
+      device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Storage Texture"),
+        size: wgpu::Extent3d { width: width / DOWNSCALE, height: height / DOWNSCALE, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+      })
+  }
+
   pub async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
     let instance = wgpu::Instance::default();
-    let surface = instance.create_surface(Arc::clone(&window))
-      .expect("Failed to create surface from window!");
+    let surface = instance.create_surface(Arc::clone(&window)).unwrap();
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-      power_preference: wgpu::PowerPreference::default(),
-      force_fallback_adapter: false,
       compatible_surface: Some(&surface),
-    }).await.expect("Failed to find an appropriate adapter");
-    // Create the logical device and command queue
-    let (device, queue) = adapter.request_device(
-      &wgpu::DeviceDescriptor {
-        label: None,
-        required_features: wgpu::Features::default(),
-        required_limits: wgpu::Limits::default(),
-        memory_hints: wgpu::MemoryHints::Performance,
-        trace: wgpu::Trace::Off,
-      },
-    ).await.expect("Failed to create device");
+      ..Default::default()
+    }).await.unwrap();
+    let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
 
     let size = window.inner_size();
     let width = size.width.max(1);
     let height = size.height.max(1);
     let surface_config = surface.get_default_config(&adapter, width, height).unwrap();
     surface.configure(&device, &surface_config);
+    
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let compute_texture = Self::new_texture(&device, width, height);
+    let compute_view = compute_texture.create_view(&Default::default());
 
-    // Load the shader from disk
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("Shader"),
-      source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+    let compute_shader = device.create_shader_module(wgpu::include_wgsl!("compute.wgsl"));
+    let compute_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+      label: Some("Compute BGL"),
+      entries: &[
+        // Output Texture
+        wgpu::BindGroupLayoutEntry {
+          binding: 0,
+          visibility: wgpu::ShaderStages::COMPUTE,
+          ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            view_dimension: wgpu::TextureViewDimension::D2,
+          },
+          count: None,
+        },
+        // Data Buffer
+        wgpu::BindGroupLayoutEntry {
+          binding: 1,
+          visibility: wgpu::ShaderStages::COMPUTE,
+          ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+          },
+          count: None,
+        },
+        // Voxel Storage Buffer
+        wgpu::BindGroupLayoutEntry {
+          binding: 2, 
+          visibility: wgpu::ShaderStages::COMPUTE,
+          ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+          },
+          count: None,
+        },
+      ],
     });
-    let vertex_buffer = device.create_buffer_init(
-      &wgpu::util::BufferInitDescriptor {
-        label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(&VERTICES),
-        usage: wgpu::BufferUsages::VERTEX,
-      }
-    );
-    let index_buffer = device.create_buffer_init(
-      &wgpu::util::BufferInitDescriptor {
-        label: Some("Index Buffer"),
-        contents: bytemuck::cast_slice(&FULL_SCREEN_INDICIES),
-        usage: wgpu::BufferUsages::INDEX,
-      }
-    );
 
-    // Create uniform buffer for camera and scene data, filling it with dummy data
-    // Yes we could go and just set contents: [0.0; buffersize], but that silently fails as soon as
-    // I change Data and I'd rather a loud failure
-    let data_buffer = device.create_buffer_init(
-      &wgpu::util::BufferInitDescriptor {
-        label: Some("Data Buffer"),
-        contents: bytemuck::cast_slice(&[Data::dummy()]),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-      }
-    );
+    // Stores Data {..}
+    let data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("Data Buffer"),
+      size: 48,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
+    });
+    // Stores BasicNode {...}s
+    let voxel_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("Voxel Buffer"),
+      // Each BasicNode is 32 Bytes, we want to store up to 64 of them
+      size: 32 * 64,
+      usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false
+    });
 
-    // Create storage buffer for voxel data, allocating room for up to 64 nodes
-    let voxel_buffer = device.create_buffer_init(
-      &wgpu::util::BufferInitDescriptor {
-        label: Some("Voxel Storage Buffer"),
-        contents: bytemuck::cast_slice(&Vec::from( [BasicNode3d::new(&[0; 8]); 64] )),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-      }
-    );
-
-    // Creates a blueprint
-    let bind_group_layout = device.create_bind_group_layout(
-      &wgpu::BindGroupLayoutDescriptor {
-        entries: &[
-          wgpu::BindGroupLayoutEntry {
-            // Basically an id
-            binding: 0,
-            // Visible to both Vertex and Fragment shaders
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            // Type of binding
-            ty: wgpu::BindingType::Buffer {
-              // Uniform: All Data is the same type
-              ty: wgpu::BufferBindingType::Uniform,
-              // Is fixed length
-              has_dynamic_offset: false,
-              min_binding_size: None,
-            },
-            count: None,
-          },
-          wgpu::BindGroupLayoutEntry {
-            binding: 1,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-              ty: wgpu::BufferBindingType::Storage { read_only: true },
-              has_dynamic_offset: false,
-              min_binding_size: None,
-            },
-            count: None,
-          },
-        ],
-        label: Some("bind_group_layout"),
-      }
-    );
-
-    // Creates a bind group following above blueprint
-    let data_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &bind_group_layout,
+    let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &compute_bgl,
       entries: &[
         wgpu::BindGroupEntry {
           binding: 0,
-          resource: data_buffer.as_entire_binding(),
+          resource: wgpu::BindingResource::TextureView(&compute_view),
         },
         wgpu::BindGroupEntry {
           binding: 1,
+          resource: data_buffer.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 2,
           resource: voxel_buffer.as_entire_binding(),
         },
       ],
-      label: Some("data_bind_group"),
+      label: Some("Compute BG"),
+    });
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+      layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Compute Layout"),
+        bind_group_layouts: &[&compute_bgl],
+        push_constant_ranges: &[]
+      })),
+      cache: None,
+      compilation_options: wgpu::PipelineCompilationOptions::default(),
+      module: &compute_shader,
+      entry_point: Some("main"),
+      label: Some("Compute Pipeline")
     });
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label: Some("Render Pipeline Layout"),
-      // Include the uniform bind group layout
-      bind_group_layouts: &[&bind_group_layout],
-      push_constant_ranges: &[],
-    });
 
+    let render_module = device.create_shader_module(wgpu::include_wgsl!("render.wgsl"));
+    let render_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+      label: Some("Render BGL"),
+      entries: &[
+        wgpu::BindGroupLayoutEntry {
+          binding: 0,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Texture {
+            multisampled: false,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+          },
+          count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+          binding: 1,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+          count: None,
+        },
+      ],
+    });
+    let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &render_bgl,
+      entries: &[
+        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&compute_view) },
+        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+      ],
+      label: Some("Render BG"),
+    });
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label: Some("Render Pipeline"),
-      layout: Some(&pipeline_layout),
+      layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Render Layout"),
+        bind_group_layouts: &[&render_bgl],
+        push_constant_ranges: &[],
+      })),
+      cache: None,
       vertex: wgpu::VertexState {
-        module: &shader,
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        module: &render_module,
         entry_point: Some("vs_main"),
-        buffers: &[Vertex::desc()],
-        compilation_options: PipelineCompilationOptions::default(),
+        buffers: &[],
       },
       fragment: Some(wgpu::FragmentState {
-        module: &shader,
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        module: &render_module,
         entry_point: Some("fs_main"),
-        compilation_options: PipelineCompilationOptions::default(),
         targets: &[Some(wgpu::ColorTargetState {
-          format: surface_config.format,
-          blend: Some(wgpu::BlendState {
-            color: wgpu::BlendComponent {
-              src_factor: wgpu::BlendFactor::SrcAlpha,
-              dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-              operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-              src_factor: wgpu::BlendFactor::One,
-              dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-              operation: wgpu::BlendOperation::Add,
-            },
-          }),
+          format: surface.get_capabilities(&adapter).formats[0],
+          blend: Some(wgpu::BlendState::REPLACE),
           write_mask: wgpu::ColorWrites::ALL,
         })],
       }),
-      primitive: wgpu::PrimitiveState {
-        topology: wgpu::PrimitiveTopology::TriangleList,
-        strip_index_format: None,
-        front_face: wgpu::FrontFace::Ccw,
-        cull_mode: Some(wgpu::Face::Back),
-        polygon_mode: wgpu::PolygonMode::Fill,
-        unclipped_depth: false,
-        conservative: false,
-      },
+      primitive: wgpu::PrimitiveState::default(),
       depth_stencil: None,
-      multisample: wgpu::MultisampleState {
-        count: 1,
-        mask: !0,
-        alpha_to_coverage_enabled: false,
-      },
-      multiview: None,
-      cache: None,
+      multisample: wgpu::MultisampleState::default(),
+      multiview: None
     });
+
 
     WgpuCtx {
       surface,
       surface_config,
       device,
       queue,
-      render_pipeline,
-      vertex_buffer,
-      index_buffer,
+
       data_buffer,
       voxel_buffer,
-      data_bind_group,
+
+      compute_bgl,
+      compute_pipeline,
+      compute_bind_group,
+      render_bgl,
+      render_pipeline,
+      render_bind_group,
+      sampler,
     }
   }
 
   pub fn new(window: Arc<Window>) -> WgpuCtx<'window> { pollster::block_on(WgpuCtx::new_async(window)) }
 
-  // REMEMBER TO UPDATE THIS IF WE MOVE THE RESOLUTION FIELD
   pub fn resize(&mut self, new_size: (u32, u32)) {
     let (width, height) = new_size;
     self.surface_config.width = width.max(1);
     self.surface_config.height = height.max(1);
     self.surface.configure(&self.device, &self.surface_config);
 
-    // Update the resolution in the data buffer
-    self.queue.write_buffer(
-      &self.data_buffer,
-      // Offset to resolution field, it's after 2 64 byte fields
-      std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2,
-      bytemuck::cast_slice(&[width as f32, height as f32]),
-    );
+    let compute_texture = Self::new_texture(&self.device, width, height);
+    let compute_view = compute_texture.create_view(&Default::default());
+
+    self.compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &self.compute_bgl,
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: wgpu::BindingResource::TextureView(&compute_view),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: wgpu::BindingResource::Buffer(self.data_buffer.as_entire_buffer_binding()),
+        },
+        wgpu::BindGroupEntry {
+          binding: 2,
+          resource: wgpu::BindingResource::Buffer(self.voxel_buffer.as_entire_buffer_binding()),
+        },
+      ],
+      label: Some("Compute BG"),
+    });
+
+    self.render_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &self.render_bgl,
+      entries: &[
+        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&compute_view) },
+        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+      ],
+      label: Some("Render BG"),
+    });
   }
 
   pub fn draw(&mut self, game_data: &GameData) {
-    let grid_origin = glam::Vec3::new(0.0, 0.0, 0.0);
+    let (width, height) = (self.surface_config.width, self.surface_config.height);
+    let frame = self.surface.get_current_texture().unwrap();
+    let view = frame.texture.create_view(&Default::default());
+    let mut encoder = self.device.create_command_encoder(&Default::default());
 
-    // Update data buffer with new values
     let data = Data::new(
-      game_data.camera.projection_matrix(),
-      [self.surface_config.width as f32, self.surface_config.height as f32],
-      [game_data.render_root.idx, game_data.render_root.height],
-      (game_data.camera.position() - grid_origin).into(),
-      game_data.camera.forward().into(),
+      game_data.render_root.idx,
+      game_data.render_root.height,
+      game_data.camera.position(),
+      game_data.camera.forward(),
     );
+    self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
 
-    // Update voxel buffer
     let voxels = game_data.sdg.nodes.data().iter().map(|x|
       x.clone().unwrap_or(BasicNode3d::new(&[u32::MAX; 8]))
     ).collect::<Vec<_>>();
-
     self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
-    self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
-    
-    // Acquires next texture to be drawn to screen
-    let surface_texture = self.surface.get_current_texture()
-      .expect("Failed to acquire next swap chain texture");
-    // Allows the texture to be run through a render_pass
-    let texture_view = surface_texture.texture
-      .create_view(&wgpu::TextureViewDescriptor::default());
 
-    let mut encoder = self.device
-      .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let mut compute_pass = encoder.begin_compute_pass(&Default::default());
+    compute_pass.set_pipeline(&self.compute_pipeline);
+    compute_pass.set_bind_group(0, &self.compute_bind_group, &[],);
+    // This is ugly
+    compute_pass.dispatch_workgroups(
+      (width / DOWNSCALE + WORKGROUP_SQUARE - 1) / WORKGROUP_SQUARE,
+      (height / DOWNSCALE + WORKGROUP_SQUARE - 1) / WORKGROUP_SQUARE,
+      1
+    );
+    drop(compute_pass);
+
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
       label: Some("Render Pass"),
       color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-        view: &texture_view, // We want to operate on this texture
+        view: &view,
         resolve_target: None,
         ops: wgpu::Operations {
-          load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), // Clear the texture when loaded
-          store: wgpu::StoreOp::Store, // Store output to this texture
+          load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+          store: wgpu::StoreOp::Store,
         },
       })],
       depth_stencil_attachment: None,
@@ -342,14 +348,11 @@ impl<'window> WgpuCtx<'window> {
       occlusion_query_set: None,
     });
     render_pass.set_pipeline(&self.render_pipeline);
-    render_pass.set_bind_group(0, &self.data_bind_group, &[]);
-    render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-    render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-    render_pass.draw_indexed(0..6, 0, 0..1);
+    render_pass.set_bind_group(0, &self.render_bind_group, &[]);
+    render_pass.draw(0..3, 0..1);
     drop(render_pass);
-
     self.queue.submit(Some(encoder.finish()));
-    surface_texture.present();
+    frame.present();
   }
 }
 
