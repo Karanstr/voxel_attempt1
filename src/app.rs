@@ -80,17 +80,22 @@ impl<'window> Default for App<'window> {
 }
 
 impl<'window> ApplicationHandler for App<'window> {
-  // Create (or re-acquire) window and wgpu_ctx
+  // Create window and wgpu_ctx
   // Requests redraw
   fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-    let window = self.window.get_or_init(|| {
-      Arc::new(event_loop.create_window(
+    match self.window.get() {
+      Some(already) => already.request_redraw(),
+      None => {
+        let new_window = Arc::new(event_loop.create_window(
           Window::default_attributes().with_title("Voxel")
-      ).expect("Failed to construct the window (app.rs)"))
-    });
-    self.wgpu_ctx.get_or_init(|| { WgpuCtx::new(window.clone()) });
-
-    window.request_redraw();
+        ).unwrap());
+        self.window.set(new_window.clone()).unwrap();
+        new_window.request_redraw();
+        let new_ctx = WgpuCtx::new(new_window);
+        new_ctx.update_voxels(&self.game_data.sdg);
+        self.wgpu_ctx.set(new_ctx).unwrap_or_else(|_| panic!("Should be impossible to get here, but I'm not gonna let this fail quietly somehow and I'm not implementing debug on WgpuCtx, that's way too much work"));
+      }
+    }
   }
 
   // Cursor is locked, so we need to acquire mouse motion directly

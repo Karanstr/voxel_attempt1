@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::graph::basic_node3d::BasicNode3d;
-use crate::graph::sdg::Node;
+use crate::graph::sdg::{self, Node, SparseDirectedGraph};
 use winit::window::Window;
 use crate::app::GameData;
 
@@ -304,12 +304,20 @@ impl<'window> WgpuCtx<'window> {
     });
   }
 
+  pub fn update_voxels(&self, sdg:&SparseDirectedGraph<BasicNode3d>) {
+    let voxels = sdg.nodes.data().iter().map(|x|
+      x.clone().unwrap_or(BasicNode3d::new(&[u32::MAX; 8]))
+    ).collect::<Vec<_>>();
+    self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
+  }
+  
   pub fn draw(&mut self, game_data: &GameData) {
     let (width, height) = (self.surface_config.width, self.surface_config.height);
     let frame = self.surface.get_current_texture().unwrap();
     let view = frame.texture.create_view(&Default::default());
     let mut encoder = self.device.create_command_encoder(&Default::default());
 
+    // Probably extract at some point, but I don't care about cloning so few values rn
     let data = Data::new(
       game_data.render_root.idx,
       game_data.render_root.height,
@@ -317,11 +325,6 @@ impl<'window> WgpuCtx<'window> {
       game_data.camera.forward(),
     );
     self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
-
-    let voxels = game_data.sdg.nodes.data().iter().map(|x|
-      x.clone().unwrap_or(BasicNode3d::new(&[u32::MAX; 8]))
-    ).collect::<Vec<_>>();
-    self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
 
     let mut compute_pass = encoder.begin_compute_pass(&Default::default());
     compute_pass.set_pipeline(&self.compute_pipeline);
