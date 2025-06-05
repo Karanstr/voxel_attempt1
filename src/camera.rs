@@ -1,17 +1,16 @@
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
+use std::f32::consts::PI;
+const QUARTER: f32 = PI / 2.;
 
 /// Camera struct for handling camera position, rotation, and movement
 pub struct Camera {
-  // Position and orientation
+  // Position
   position: Vec3,
   yaw: f32,   // Horizontal rotation in radians
   pitch: f32, // Vertical rotation in radians
 
   // Camera properties
-  fov: f32,       // Field of view in degrees
   aspect_ratio: f32,
-  near_plane: f32,
-  far_plane: f32,
 }
 
 impl Default for Camera {
@@ -20,10 +19,7 @@ impl Default for Camera {
       position: Vec3::new(1.0, 3.0,2.0),
       yaw: 0.0,
       pitch: 0.0,
-      fov: 60.0,
       aspect_ratio: 1.0,
-      near_plane: 0.1,
-      far_plane: 100.0,
     }
   }
 }
@@ -39,18 +35,8 @@ impl Camera {
   pub fn rotate(&mut self, raw_delta: Vec2, sensitivity: f32) {
     self.yaw += raw_delta.x * sensitivity;
     self.pitch -= raw_delta.y * sensitivity;
-    self.pitch = self.pitch.clamp(-89.9, 89.9);
-    self.yaw = self.yaw % 360.0;
-  }
-
-  /// Returns the projection matrix for this camera
-  pub fn projection_matrix(&self) -> Mat4 {
-    Mat4::perspective_rh_gl(
-      self.fov.to_radians(),
-      self.aspect_ratio,
-      self.near_plane,
-      self.far_plane
-    )
+    self.pitch = self.pitch.clamp(-QUARTER + 0.001, QUARTER - 0.001);
+    self.yaw = self.yaw % (PI * 2.);
   }
 
   /// Sets the aspect ratio (typically when window is resized)
@@ -60,17 +46,17 @@ impl Camera {
 
   pub fn position(&self) -> Vec3 { self.position }
 
-  pub fn set_position(&mut self, position: Vec3) { self.position = position; }
+  pub fn _set_position(&mut self, position: Vec3) { self.position = position; }
 
+  // No reason to normalize this I think, all we care about is the ratio
   pub fn forward(&self) -> Vec3 {
-    let pitch_rad = self.pitch.to_radians();
-    let yaw_rad = self.yaw.to_radians();
-
+    let (yaw_sin, yaw_cos) = self.yaw.sin_cos();
+    let (pitch_sin, pitch_cos) = self.pitch.sin_cos();
     Vec3::new(
-      yaw_rad.cos() * pitch_rad.cos(),
-      pitch_rad.sin(),
-      yaw_rad.sin() * pitch_rad.cos()
-    ).normalize()
+      yaw_cos * pitch_cos,
+      pitch_sin,
+      yaw_sin * pitch_cos,
+    )
   }
 
 }

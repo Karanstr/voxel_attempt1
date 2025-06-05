@@ -188,12 +188,12 @@ impl<'window> App<'window> {
     // Player controls should only work while mouse is captured
     if !self.mouse_captured { return }
     if self.mouse_delta != Vec2::ZERO {
-      self.game_data.camera.rotate(self.mouse_delta, 0.1);
+      self.game_data.camera.rotate(self.mouse_delta, 0.002);
       self.mouse_delta = Vec2::ZERO;
     }
     if !self.keys_pressed.is_empty() {
       let camera_speed = 5.0 * dt;
-      let forward = self.game_data.camera.forward().with_y(0.0);
+      let forward = self.game_data.camera.forward().with_y(0.0).normalize();
       let right = forward.cross(Vec3::Y).normalize();
       let mut displacement = Vec3::ZERO;
       // This feels like a really silly way to key lookups when a hashmap would prob be better..
