@@ -113,17 +113,15 @@ impl<'window> ApplicationHandler for App<'window> {
     match event {
       WindowEvent::CloseRequested => event_loop.exit(),
       WindowEvent::Resized(new_size) => {
-        self.game_data.camera.set_aspect_ratio(new_size.width as f32 / new_size.height as f32);
-        self.wgpu_ctx.get_mut().unwrap().resize((new_size.width, new_size.height));
+        self.game_data.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
+        self.wgpu_ctx.get_mut().unwrap().resize(new_size);
       },
       WindowEvent::RedrawRequested => {
         // Update camera based on input
         self.tick_camera();
         self.display_fps(1.);
 
-        // Draw to frame buffer(?)
         self.wgpu_ctx.get_mut().unwrap().draw(&self.game_data);
-        // Push framebuffer to screen(?)
         self.window.get().unwrap().request_redraw();
       },
       WindowEvent::KeyboardInput { event, .. } => {
@@ -193,8 +191,8 @@ impl<'window> App<'window> {
     }
     if !self.keys_pressed.is_empty() {
       let camera_speed = 5.0 * dt;
-      let forward = self.game_data.camera.forward().with_y(0.0).normalize();
-      let right = forward.cross(Vec3::Y).normalize();
+      let (right, _, mut forward) = self.game_data.camera.basis().into();
+      forward = forward.with_y(0.0).normalize();
       let mut displacement = Vec3::ZERO;
       // This feels like a really silly way to key lookups when a hashmap would prob be better..
       if self.keys_pressed.contains(&KeyCode::KeyW) {
@@ -215,7 +213,7 @@ impl<'window> App<'window> {
       if self.keys_pressed.contains(&KeyCode::ShiftLeft) {
         displacement -= Vec3::Y;
       }
-      self.game_data.camera.translate(displacement.normalize_or_zero() * camera_speed);
+      self.game_data.camera.position += displacement.normalize_or_zero() * camera_speed;
     }
   }
 

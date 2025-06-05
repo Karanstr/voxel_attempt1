@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::graph::basic_node3d::BasicNode3d;
-use crate::graph::sdg::{self, Node, SparseDirectedGraph};
+use crate::graph::sdg::{Node, SparseDirectedGraph};
 use winit::window::Window;
 use crate::app::GameData;
 
@@ -13,35 +13,40 @@ const WORKGROUP_SQUARE: u32 = 8;
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Data {
     render_root: [u32; 2],
-    padding1: [u32; 2],
-    camera_pos: [f32; 3],
+    cam_aspect: f32,
+    cam_tan_fov: f32,
+    cam_pos: [f32; 3],
     padding2: f32,
-    camera_dir: [f32; 3],
+    cam_forward: [f32; 3],
     padding3: f32,
+    cam_right: [f32; 3],
+    padding4: f32,
+    cam_up: [f32; 3],
+    padding5: f32,
 }
 impl Data {
-    fn new(root_idx:u32, root_height:u32, camera_pos:glam::Vec3, camera_dir: glam::Vec3) -> Self {
+    fn new(
+      root_idx:u32,
+      root_height:u32,
+      camera_pos:glam::Vec3,
+      basis: [glam::Vec3; 3],
+      aspect_ratio: f32,
+      fov: f32,
+    ) -> Self {
     Self {
       render_root: [root_idx, root_height],
-      padding1: [0; 2],
-      camera_pos: camera_pos.into(),
+      cam_aspect: aspect_ratio,
+      cam_tan_fov: (fov / 2.).tan(),
+      cam_pos: camera_pos.into(),
       padding2: 0.,
-      camera_dir: camera_dir.into(),
+      cam_forward: basis[2].into(),
       padding3: 0.,
+      cam_right: basis[0].into(),
+      padding4: 0.,
+      cam_up: basis[1].into(),
+      padding5: 0.,
     }
   } 
-}
-impl Default for Data {
-  fn default() -> Self {
-    Self {
-      render_root: [0; 2],
-      padding1: [0; 2],
-      camera_pos: [0.; 3],
-      padding2: 0.,
-      camera_dir: [0.; 3],
-      padding3: 0.,
-    }
-  }
 }
 
 pub struct WgpuCtx<'window> {
@@ -139,7 +144,7 @@ impl<'window> WgpuCtx<'window> {
     // Stores Data {..}
     let data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Data Buffer"),
-      size: 48,
+      size: 80,
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
@@ -266,13 +271,11 @@ impl<'window> WgpuCtx<'window> {
 
   pub fn new(window: Arc<Window>) -> WgpuCtx<'window> { pollster::block_on(WgpuCtx::new_async(window)) }
 
-  pub fn resize(&mut self, new_size: (u32, u32)) {
-    let (width, height) = new_size;
-    self.surface_config.width = width.max(1);
-    self.surface_config.height = height.max(1);
+  pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    self.surface_config.width = new_size.width;
+    self.surface_config.height = new_size.height;
     self.surface.configure(&self.device, &self.surface_config);
-
-    let compute_texture = Self::new_texture(&self.device, width, height);
+    let compute_texture = Self::new_texture(&self.device, new_size.width, new_size.height);
     let compute_view = compute_texture.create_view(&Default::default());
 
     self.compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -321,8 +324,10 @@ impl<'window> WgpuCtx<'window> {
     let data = Data::new(
       game_data.render_root.idx,
       game_data.render_root.height,
-      game_data.camera.position(),
-      game_data.camera.forward(),
+      game_data.camera.position,
+      game_data.camera.basis(),
+      game_data.camera.aspect_ratio,
+      game_data.camera.fov,
     );
     self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
 

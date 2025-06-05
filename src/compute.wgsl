@@ -6,12 +6,18 @@ const FP_BUMP: f32 = 0.0001;
 var output_tex: texture_storage_2d<rgba8unorm, write>;
 
 struct Data {
+  // [Idx, Height]
   render_root: vec2<u32>,
-  padding1: vec2<u32>,
-  camera_pos: vec3<f32>,
-  // padding1: f32
-  camera_dir: vec3<f32>,
-  // padding2: f32
+  aspect_ratio: f32,
+  tan_fov: f32,
+  cam_pos: vec3<f32>,
+  // padding: f32
+  cam_forward: vec3<f32>,
+  // padding: f32
+  cam_right: vec3<f32>,
+  // padding: f32
+  cam_up: vec3<f32>,
+  // padding: f32
 }
 @group(0) @binding(1)
 var<uniform> data: Data;
@@ -27,11 +33,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let resolution = vec2<u32>(textureDimensions(output_tex));
   if (gid.x >= resolution.x || gid.y >= resolution.y) { return; }
   let color = march_init(gid, resolution);
-  textureStore(
-    output_tex,
-    vec2<i32>(gid.xy),
-    color
-  );
+  textureStore(output_tex, vec2<i32>(gid.xy), color);
 }
 
 // Ray hit information
@@ -48,34 +50,22 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   // 0,0 Bottom Right ->  cells * cell_length Top Left
   let bounds = vec3<f32>(f32(cells));
 
-  let forward = data.camera_dir;
-  let up = vec3<f32>(0.0, 1.0, 0.0);
-
-  // This should all be done outside
-  let aspect = f32(resolution.x) / f32(resolution.y);
-  let camera_pos = data.camera_pos / MIN_BLOCK_SIZE;
-  let right = normalize(cross(forward, up));
-  let camera_up = normalize(cross(right, forward));
-  let tan_fov = tan(1.0);
-
-  let uv = 2.0 * (vec2<f32>(gid.xy) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(aspect, 1.0);
-
   // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
-  //let uv = 2.0 * (in.texcoord - 0.5) * vec2<f32>(aspect, 1.0);
+  let uv = 2.0 * (vec2<f32>(gid.xy) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
 
   // We don't need to normalize this, all we care about is the ratio
-  let ray_dir = forward + right * uv.x * tan_fov + camera_up * uv.y * tan_fov;
+  let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
   
-  let hit = dda_vox(camera_pos, ray_dir, bounds);
+  let hit = dda_vox(data.cam_pos, ray_dir, bounds);
     
   if (hit.hit) {
-    let hit_pos = camera_pos + ray_dir * hit.t;
+    let hit_pos = data.cam_pos + ray_dir * hit.t;
     let percent_of_block = fract(hit_pos);
 
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(0.99)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
     // Outline each cube
-    // if (edge_count >= 2) { return vec4<f32>(0.0); }
+    if (edge_count >= 2) { return vec4<f32>(0.0); }
 
     // Base color from normal
     let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
