@@ -1,5 +1,4 @@
 const WG_SIZE = 8;
-const MIN_BLOCK_SIZE: f32 = 1.0;
 const FP_BUMP: f32 = 0.0001; 
 
 @group(0) @binding(0)
@@ -65,7 +64,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(0.99)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
     // Outline each cube
-    if (edge_count >= 2) { return vec4<f32>(0.0); }
+    // if (edge_count >= 2) { return vec4<f32>(0.0); }
 
     // Base color from normal
     let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
@@ -85,7 +84,6 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   }
 }
 
-// Assumes camera_pos has been normalized by min_cell
 fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   // Initialize result
   var result = RayHit();
@@ -99,11 +97,8 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   // Direction to step in the grid (either 1, 0, or -1 for each axis)
   let step = vec3<i32>(sign(dir));
 
-  // Handle zero components in direction to avoid division by zero
-  let safe_dir = select(dir, vec3<f32>(FP_BUMP), abs(dir) < vec3<f32>(FP_BUMP));
-
-  // Calculate inverse of direction for faster calculations
-  let inv_dir = 1.0 / safe_dir;
+  // Calculate inverse of direction for faster calculations, ensuring no components are division by zeros
+  let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
 
   var t_max = select(
     select(
@@ -152,9 +147,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     normal = mask;
 
     // Check if we've gone outside the bounds
-    if (any(clamp(cur_voxel, vec3<i32>(0), cell_bounds) != cur_voxel)) {
-      break;
-    }
+    if (any(clamp(cur_voxel, vec3<i32>(0), cell_bounds) != cur_voxel)) { break; }
   }
 
   // No hit found
