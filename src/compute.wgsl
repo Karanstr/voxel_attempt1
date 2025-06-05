@@ -1,4 +1,6 @@
 const WG_SIZE = 8;
+const MIN_BLOCK_SIZE: f32 = 1.0;
+const FP_BUMP: f32 = 0.0001; 
 
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba8unorm, write>;
@@ -18,8 +20,19 @@ struct VoxelNode { children: array<u32, 8> }
 @group(0) @binding(2)
 var<storage> voxels: array<VoxelNode>;
 
-const MIN_BLOCK_SIZE: f32 = 1.0;
-const FP_BUMP: f32 = 0.0001; 
+@compute @workgroup_size(WG_SIZE, WG_SIZE)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // We do a little padding so we can fit our pixels into the workgroups
+  // This prevents any unwanted computation on the edges
+  let resolution = vec2<u32>(textureDimensions(output_tex));
+  if (gid.x >= resolution.x || gid.y >= resolution.y) { return; }
+  let color = march_init(gid, resolution);
+  textureStore(
+    output_tex,
+    vec2<i32>(gid.xy),
+    color
+  );
+}
 
 // Ray hit information
 struct RayHit {
@@ -27,34 +40,6 @@ struct RayHit {
   normal: vec3<f32>,
   t: f32,
   voxel_value: u32,
-}
-
-// DAG Traversal
-fn get_vox_data(root: vec2<u32>, cell: vec3<u32>) -> u32 {
-  if (any(clamp(cell, vec3(0u), vec3(1u << root[1]) - 1) != cell)) { return 0u; }
-  var cur_index = root[0];
-  for (var cur_height = root[1]; cur_height > 0; cur_height -= 1) {
-    let shift = cur_height - 1;
-    let childx = (cell.x >> shift) & 1;
-    let childy = (cell.y >> shift) & 1;
-    let childz = (cell.z >> shift) & 1;
-    let next_index = voxels[cur_index].children[childz << 2 | childy << 1 | childx];
-    if (next_index == cur_index) { break; } else { cur_index = next_index; }
-  }
-  return cur_index;
-}
-
-
-
-@compute @workgroup_size(WG_SIZE, WG_SIZE)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  // We do a little padding so we can fit our pixels into the workgroups
-  // This prevents any unwanted computation on the edges
-  let resolution = vec2<u32>(textureDimensions(output_tex));
-  if (gid.x >= resolution.x || gid.y >= resolution.y) { return; }
-
-  let color = march_init(gid, resolution);
-  textureStore(output_tex, vec2<i32>(gid.xy), color);
 }
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
@@ -130,10 +115,9 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   // Calculate inverse of direction for faster calculations
   let inv_dir = 1.0 / safe_dir;
 
-
   var t_max = select(
     select(
-    // This bump fixes #3, not quite sure why
+      // This bump fixes #3, not quite sure why
       (ceil(camera_pos + FP_BUMP) - camera_pos) * inv_dir,
       // I'm going out on a limb and assuming this will fix both sides.. if something goes wrong this is probably why
       (floor(camera_pos + FP_BUMP) - camera_pos) * inv_dir,
@@ -155,7 +139,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   // Main DDA loop
   for (var i = 0u; i < 100u; i++) {
     // Check current voxel
-    let cur_val = get_vox_data(data.render_root, vec3<u32>(cur_voxel));
+    let cur_val = vox_read(data.render_root, vec3<u32>(cur_voxel));
 
     if (cur_val != 0u && t != 0.0) {
       // We hit a voxel
@@ -186,3 +170,24 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   // No hit found
   return result;
 }
+
+fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> u32 {
+  // Sanity check, if the cell can't exist within the root's bounds, it must be air
+  // Please note, 0 doesn't mean air necessarily, that's determined by the pallete/indexing structure I haven't written yet..
+  if (any(clamp(cell, vec3(0u), vec3(1u << root[1]) - 1) != cell)) { return 0u; }
+
+  // At some point in the future upfront reversal may be beneficial.
+  var cur_index = root[0];
+  var cur_height = root[1];
+  while (cur_height > 0) {
+    let shift = cur_height - 1;
+    let childx = (cell.x >> shift) & 1;
+    let childy = (cell.y >> shift) & 1;
+    let childz = (cell.z >> shift) & 1;
+    let next_index = voxels[cur_index].children[childz << 2 | childy << 1 | childx];
+    if (next_index == cur_index) { break; } else { cur_index = next_index; }
+    cur_height -= 1;
+  }
+  return cur_index;
+}
+

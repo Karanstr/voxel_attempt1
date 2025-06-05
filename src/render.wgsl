@@ -1,3 +1,5 @@
+// ALWAYS UPDATE CORESPONDING DOWNSCALE VALUE IN ./wgpu_ctx.rs
+const UPSCALE = 1;
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
@@ -14,8 +16,6 @@ var my_texture: texture_2d<f32>;
 @group(0) @binding(1)
 var my_sampler: sampler;
 
-// ALWAYS UPDATE CORESPONDING DOWNSCALE VALUE IN ./wgpu_ctx.rs
-const UPSCALE = 1;
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
   let uv = frag_coord.xy / (vec2<f32>(textureDimensions(my_texture)) * UPSCALE);
