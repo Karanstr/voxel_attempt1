@@ -51,7 +51,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   let bounds = vec3<f32>(f32(cells));
 
   // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
-  let uv = 2.0 * (vec2<f32>(gid.xy) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
+  let uv = 2.0 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
 
   // We don't need to normalize this, all we care about is the ratio
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
