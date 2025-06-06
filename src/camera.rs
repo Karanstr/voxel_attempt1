@@ -21,7 +21,7 @@ impl Default for Camera {
       yaw: 0.0,
       pitch: 0.0,
       aspect_ratio: 1.0,
-      fov: 1.5,
+      fov: 1.4,
     }
   }
 }

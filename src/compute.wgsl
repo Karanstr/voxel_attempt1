@@ -58,10 +58,8 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     
   if (hit.hit) {
     let hit_pos = data.cam_pos + ray_dir * hit.t;
-    // This needs to be adjusted based on voxel height (if I want to visualize sparsity)
     let block_size = f32(1u << hit.voxel[1]);
     let percent_of_block = fract(hit_pos / block_size);
-
 
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
@@ -87,39 +85,33 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
 }
 
 fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
-  // Initialize result
   var result = RayHit();
   result.hit = false;
   result.t = 0.0;
+
   // We only march through grids for now, not into them.
   if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { return result; }
 
-  // Direction we're moving
   let step = vec3<i32>(sign(dir));
-  // Direction is just the ratio of motion
-  // Calculate inverse of direction for faster calculations, ensuring no components are division by zeros
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
-  // Distance between voxel boundaries
   let t_delta = abs(inv_dir);
 
-  // Distance to first boundary, basically projecting us to the walls(?)
-  var t_max = select(
-    select(
-      // This bump fixes #3, not quite sure why
-      (ceil(camera_pos + FP_BUMP) - camera_pos) * inv_dir,
-      // I'm going out on a limb and assuming this will fix both sides.. if something goes wrong this is probably why
-      (floor(camera_pos + FP_BUMP) - camera_pos) * inv_dir,
-      step < vec3<i32>(0)
-    ),
-    vec3<f32>(1000000.0),
-    step == vec3<i32>(0)
-  );
-
   var cur_voxel = vec3<i32>(floor(camera_pos));
-  // I feel like all the boring t_max stuff that happens above should just happen inside the loop. Instead of storing total t_max since we start marching,
-  // why don't we just compute percentages inside?
+  // result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
+  // let block_size = 1 << result.voxel[1];
+  // let mask = vec3<i32>(block_size - 1);
+  // let offset = cur_voxel & mask;
+  // let blocks = vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
+
+  // Distance to first boundary
+  var t_max = select(
+    select(ceil(camera_pos) + FP_BUMP, floor(camera_pos) - FP_BUMP, step < vec3<i32>(0)) - camera_pos,
+    vec3<f32>(10000000.0),
+    step == vec3<i32>(0)
+  ) * inv_dir;// * (blocks);
+
+
   for (var i = 0u; i < 100u; i++) {
-    // let cur_voxel = vec3<i32>(floor(camera_pos));
     // We can't sample if we're outside of the grid (for now)
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds)) != cur_voxel)) { break; }
 
@@ -129,25 +121,17 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
       return result;
     }
 
-    // Walk past next boundary
-    // Find next boundary; ??
     let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
-    // t_max talks about the next block boundary (at the lowest level). We add the time it takes to clear additional blocks before the next sparse border
-    // This feels wrong, shouldn't we be able to just talk about the sparse boundaries without the intermediary step?
     let sparse_max = t_max + t_delta * vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
-    // This tells us which wall of the enlarged block we'll hit first
     let min_t = min(min(sparse_max.x, sparse_max.y), sparse_max.z);
-    // Soon we should be able to step t_max and cur_voxel in the determined direction as a single multiplication
-    // Instead of doing it as part of the catching up loop below
-    
+
     loop {
-      if (result.t >= min_t) { break; }
-      let cur_min = min(min(t_max.x, t_max.y), t_max.z);
-      result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), t_max == vec3<f32>(cur_min));
+      if (result.t + FP_BUMP >= min_t) { break; }
+      result.t = min(min(t_max.x, t_max.y), t_max.z);
+      result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), t_max == vec3<f32>(result.t));
       cur_voxel += step * vec3<i32>(result.normal);
-      result.t = cur_min + FP_BUMP;
       t_max += t_delta * result.normal;
     }
   }
