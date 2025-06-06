@@ -98,12 +98,12 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
 
   // Distance to first boundary
   var t_max = select(
-    select(ceil(camera_pos + FP_BUMP), floor(camera_pos + FP_BUMP), step < vec3<i32>(0)) - camera_pos,
+    select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0)) - camera_pos,
     vec3<f32>(10000000.0),
     step == vec3<i32>(0)
   ) * inv_dir;
 
-  var cur_voxel = vec3<i32>(floor(camera_pos));
+  var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
   for (var i = 0u; i < 100u; i++) {
     // We can't sample if we're outside of the grid (for now)
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds)) != cur_voxel)) { break; }
