@@ -96,21 +96,14 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   let t_delta = abs(inv_dir);
 
-  var cur_voxel = vec3<i32>(floor(camera_pos));
-  // result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
-  // let block_size = 1 << result.voxel[1];
-  // let mask = vec3<i32>(block_size - 1);
-  // let offset = cur_voxel & mask;
-  // let blocks = vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
-
   // Distance to first boundary
   var t_max = select(
     select(ceil(camera_pos) + FP_BUMP, floor(camera_pos) - FP_BUMP, step < vec3<i32>(0)) - camera_pos,
     vec3<f32>(10000000.0),
     step == vec3<i32>(0)
-  ) * inv_dir;// * (blocks);
+  ) * inv_dir;
 
-
+  var cur_voxel = vec3<i32>(floor(camera_pos));
   for (var i = 0u; i < 100u; i++) {
     // We can't sample if we're outside of the grid (for now)
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds)) != cur_voxel)) { break; }
