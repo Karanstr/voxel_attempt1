@@ -90,22 +90,18 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   // Initialize result
   var result = RayHit();
   result.hit = false;
+  result.t = 0.0;
   // We only march through grids for now, not into them.
   if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { return result; }
 
-  var cur_voxel = vec3<i32>(floor(camera_pos));
-
   // Direction we're moving
   let step = vec3<i32>(sign(dir));
+  // Direction is just the ratio of motion
   // Calculate inverse of direction for faster calculations, ensuring no components are division by zeros
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   // Distance between voxel boundaries
   let t_delta = abs(inv_dir);
 
-  // Current distance along ray
-  var t = 0.0;
-  // Face normal
-  var normal = vec3<f32>(0.0);
   // Distance to first boundary, basically projecting us to the walls(?)
   var t_max = select(
     select(
@@ -119,21 +115,23 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     step == vec3<i32>(0)
   );
 
-
+  var cur_voxel = vec3<i32>(floor(camera_pos));
+  // I feel like all the boring t_max stuff that happens above should just happen inside the loop. Instead of storing total t_max since we start marching,
+  // why don't we just compute percentages inside?
   for (var i = 0u; i < 100u; i++) {
+    // let cur_voxel = vec3<i32>(floor(camera_pos));
     // We can't sample if we're outside of the grid (for now)
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds)) != cur_voxel)) { break; }
 
-    let voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
-    if (voxel[0] != 0u && t != 0.0) {
+    result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
+    if (result.voxel[0] != 0u && result.t != 0.0) {
       result.hit = true;
-      result.voxel = voxel;
-      result.normal = normal;
-      result.t = t;
       return result;
     }
 
-    let block_size = 1 << voxel[1];
+    // Walk past next boundary
+    // Find next boundary; ??
+    let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
     // t_max talks about the next block boundary (at the lowest level). We add the time it takes to clear additional blocks before the next sparse border
@@ -145,13 +143,12 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     // Instead of doing it as part of the catching up loop below
     
     loop {
-      if (t >= min_t) { break; }
+      if (result.t >= min_t) { break; }
       let cur_min = min(min(t_max.x, t_max.y), t_max.z);
-      let mask = select(vec3<f32>(0.0), vec3<f32>(1.0), t_max == vec3<f32>(cur_min));
-      cur_voxel += step * vec3<i32>(mask);
-      t = cur_min + FP_BUMP;
-      t_max += t_delta * mask;
-      normal = mask;
+      result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), t_max == vec3<f32>(cur_min));
+      cur_voxel += step * vec3<i32>(result.normal);
+      result.t = cur_min + FP_BUMP;
+      t_max += t_delta * result.normal;
     }
   }
 
@@ -159,10 +156,8 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   return result;
 }
 
+// Trusts that you submit a cell which fits within the root and that root.height != 0
 fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> vec2<u32> {
-  // Sanity check, if the cell can't exist within the root's bounds, it must be air
-  // Please note, 0 doesn't mean air necessarily, that's determined by the pallete/indexing structure I haven't written yet..
-  // if (any(clamp(cell, vec3(0u), vec3(1u << root[1]) - 1) != cell)) { return vec2<u32>(0); }
   var cur_voxel = root;
   loop {
     let shift = cur_voxel[1] - 1;
