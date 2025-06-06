@@ -120,7 +120,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   );
 
 
-  for (var i = 0u; i < 200u; i++) {
+  for (var i = 0u; i < 100u; i++) {
     // We can't sample if we're outside of the grid (for now)
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds)) != cur_voxel)) { break; }
 
@@ -134,26 +134,15 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     }
 
     let block_size = 1 << voxel[1];
-    let rem_mask = block_size - 1;
-    let offset = vec3<i32>(
-      cur_voxel.x & rem_mask,
-      cur_voxel.y & rem_mask,
-      cur_voxel.z & rem_mask,
-    );
-    // If we're moving forward, we need to compute remaining instead of already passed.
-    // I don't understand why we need to add 1 to offset
-    let passing = select(
-      offset + 1,
-      vec3<i32>(block_size) - offset,
-      step > vec3<i32>(0),
-    );
-    
-    // Soon we should be able to step t_max and cur_voxel in the determined direction as a single multiplication
-    // Instead of doing it as part of the catching up loop below
-    let sparse_max = t_max + t_delta * max(vec3<f32>(passing - 1), vec3<f32>(0));
-
+    let mask = vec3<i32>(block_size - 1);
+    let offset = cur_voxel & mask;
+    // t_max talks about the next block boundary (at the lowest level). We add the time it takes to clear additional blocks before the next sparse border
+    // This feels wrong, shouldn't we be able to just talk about the sparse boundaries without the intermediary step?
+    let sparse_max = t_max + t_delta * vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
     // This tells us which wall of the enlarged block we'll hit first
     let min_t = min(min(sparse_max.x, sparse_max.y), sparse_max.z);
+    // Soon we should be able to step t_max and cur_voxel in the determined direction as a single multiplication
+    // Instead of doing it as part of the catching up loop below
     
     loop {
       if (t >= min_t) { break; }
