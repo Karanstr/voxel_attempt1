@@ -57,7 +57,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   let hit = dda_vox(data.cam_pos, ray_dir, bounds);
     
   if (hit.hit) {
-    let hit_pos = data.cam_pos + ray_dir * hit.t;
+    let hit_pos = data.cam_pos + ray_dir * (hit.t + FP_BUMP);
     let block_size = f32(1u << hit.voxel[1]);
     let percent_of_block = fract(hit_pos / block_size);
 
@@ -98,7 +98,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
 
   // Distance to first boundary
   var t_max = select(
-    select(ceil(camera_pos) + FP_BUMP, floor(camera_pos) - FP_BUMP, step < vec3<i32>(0)) - camera_pos,
+    select(ceil(camera_pos + FP_BUMP), floor(camera_pos + FP_BUMP), step < vec3<i32>(0)) - camera_pos,
     vec3<f32>(10000000.0),
     step == vec3<i32>(0)
   ) * inv_dir;
