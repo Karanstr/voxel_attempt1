@@ -40,13 +40,12 @@ struct RayHit {
   hit: bool,
   normal: vec3<f32>,
   t: f32,
-  voxel_value: u32,
+  voxel: vec2<u32>,
 }
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
-  let cells = 1u << data.render_root[1];
-  // Lowest voxel size
-  // 0,0 Bottom Right ->  cells * cell_length Top Left
+  let cells = (1u << data.render_root[1]) - 1;
+  // If height is 3: 0,0,0 -> 7,7,7
   let bounds = vec3<f32>(f32(cells));
 
   // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
@@ -59,12 +58,15 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     
   if (hit.hit) {
     let hit_pos = data.cam_pos + ray_dir * hit.t;
-    let percent_of_block = fract(hit_pos);
+    // This needs to be adjusted based on voxel height (if I want to visualize sparsity)
+    let block_size = f32(1u << hit.voxel[1]);
+    let percent_of_block = fract(hit_pos / block_size);
 
-    let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(0.99)));
+
+    let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
     // Outline each cube
-    // if (edge_count >= 2) { return vec4<f32>(0.0); }
+    if (edge_count >= 2) { return vec4<f32>(0.0); }
 
     // Base color from normal
     let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
@@ -90,16 +92,21 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   result.hit = false;
   // We only march through grids for now, not into them.
   if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { return result; }
-  let cell_bounds = vec3<i32>(bounds);
-  // Current voxel cell
+
   var cur_voxel = vec3<i32>(floor(camera_pos));
 
-  // Direction to step in the grid (either 1, 0, or -1 for each axis)
+  // Direction we're moving
   let step = vec3<i32>(sign(dir));
-
   // Calculate inverse of direction for faster calculations, ensuring no components are division by zeros
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
+  // Distance between voxel boundaries
+  let t_delta = abs(inv_dir);
 
+  // Current distance along ray
+  var t = 0.0;
+  // Face normal
+  var normal = vec3<f32>(0.0);
+  // Distance to first boundary, basically projecting us to the walls(?)
   var t_max = select(
     select(
       // This bump fixes #3, not quite sure why
@@ -112,65 +119,72 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     step == vec3<i32>(0)
   );
 
-  // Distance between voxel boundaries
-  let t_delta = abs(inv_dir);
 
-  // Current distance along ray
-  var t = 0.0;
+  for (var i = 0u; i < 200u; i++) {
+    // We can't sample if we're outside of the grid (for now)
+    if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds)) != cur_voxel)) { break; }
 
-  // Face normal
-  var normal = vec3<f32>(0.0);
-
-  // Main DDA loop
-  for (var i = 0u; i < 100u; i++) {
-    // Check current voxel
-    let cur_val = vox_read(data.render_root, vec3<u32>(cur_voxel));
-
-    if (cur_val != 0u && t != 0.0) {
-      // We hit a voxel
+    let voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
+    if (voxel[0] != 0u && t != 0.0) {
       result.hit = true;
-      result.voxel_value = cur_val;
+      result.voxel = voxel;
       result.normal = normal;
       result.t = t;
       return result;
     }
 
-    let min_t = min(min(t_max.x, t_max.y), t_max.z);
-    let mask = select(
-      vec3<f32>(0.0),
-      vec3<f32>(1.0),
-      t_max == vec3<f32>(min_t)
+    let block_size = 1 << voxel[1];
+    let rem_mask = block_size - 1;
+    let offset = vec3<i32>(
+      cur_voxel.x & rem_mask,
+      cur_voxel.y & rem_mask,
+      cur_voxel.z & rem_mask,
     );
-    cur_voxel += step * vec3<i32>(mask);
-    t = min_t + FP_BUMP;
-    t_max += t_delta * mask;
-    normal = mask;
+    // If we're moving forward, we need to compute remaining instead of already passed.
+    // I don't understand why we need to add 1 to offset
+    let passing = select(
+      offset + 1,
+      vec3<i32>(block_size) - offset,
+      step > vec3<i32>(0),
+    );
+    
+    // Soon we should be able to step t_max and cur_voxel in the determined direction as a single multiplication
+    // Instead of doing it as part of the catching up loop below
+    let sparse_max = t_max + t_delta * max(vec3<f32>(passing - 1), vec3<f32>(0));
 
-    // Check if we've gone outside the bounds
-    if (any(clamp(cur_voxel, vec3<i32>(0), cell_bounds) != cur_voxel)) { break; }
+    // This tells us which wall of the enlarged block we'll hit first
+    let min_t = min(min(sparse_max.x, sparse_max.y), sparse_max.z);
+    
+    loop {
+      if (t >= min_t) { break; }
+      let cur_min = min(min(t_max.x, t_max.y), t_max.z);
+      let mask = select(vec3<f32>(0.0), vec3<f32>(1.0), t_max == vec3<f32>(cur_min));
+      cur_voxel += step * vec3<i32>(mask);
+      t = cur_min + FP_BUMP;
+      t_max += t_delta * mask;
+      normal = mask;
+    }
   }
 
   // No hit found
   return result;
 }
 
-fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> u32 {
+fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> vec2<u32> {
   // Sanity check, if the cell can't exist within the root's bounds, it must be air
   // Please note, 0 doesn't mean air necessarily, that's determined by the pallete/indexing structure I haven't written yet..
-  if (any(clamp(cell, vec3(0u), vec3(1u << root[1]) - 1) != cell)) { return 0u; }
-
-  // At some point in the future upfront reversal may be beneficial.
-  var cur_index = root[0];
-  var cur_height = root[1];
-  while (cur_height > 0) {
-    let shift = cur_height - 1;
+  // if (any(clamp(cell, vec3(0u), vec3(1u << root[1]) - 1) != cell)) { return vec2<u32>(0); }
+  var cur_voxel = root;
+  loop {
+    let shift = cur_voxel[1] - 1;
     let childx = (cell.x >> shift) & 1;
     let childy = (cell.y >> shift) & 1;
     let childz = (cell.z >> shift) & 1;
-    let next_index = voxels[cur_index].children[childz << 2 | childy << 1 | childx];
-    if (next_index == cur_index) { break; } else { cur_index = next_index; }
-    cur_height -= 1;
+    let next_index = voxels[cur_voxel[0]].children[childz << 2 | childy << 1 | childx];
+    if (next_index == cur_voxel[0]) { break; }
+    cur_voxel[0] = next_index;
+    cur_voxel[1] -= 1;
+    if (cur_voxel[1] == 0) { break; }
   }
-  return cur_index;
+  return cur_voxel;
 }
-
