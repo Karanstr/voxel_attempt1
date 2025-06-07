@@ -64,7 +64,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
     // Outline each cube
-    if (edge_count >= 2) { return vec4<f32>(0.0); }
+    // if (edge_count >= 2) { return vec4<f32>(0.0); }
 
     // Base color from normal
     let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
@@ -96,6 +96,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   let t_step = abs(inv_dir);
   let rounded_pos = select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0));
+  // This can maybe be initialized at 0?
   var t_next = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
   
   var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
@@ -112,15 +113,16 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
-    let sparse_next = t_next + t_step * vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
+    let blocks_to_march = vec3<f32>(select(offset, mask - offset, vec3<i32>(0) < step)) + 1; 
+    let sparse_next = t_next + t_step * (blocks_to_march - 1);
     let last_t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
+    result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), sparse_next == vec3<f32>(last_t));
   
     loop {
       if (result.t + FP_BUMP >= last_t) { break; }
       result.t = min(min(t_next.x, t_next.y), t_next.z);
-      result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), t_next == vec3<f32>(result.t));
-      cur_voxel += step * vec3<i32>(result.normal);
-      t_next += t_step * result.normal;
+      cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3<f32>(result.t));
+      t_next = select(t_next, t_next + t_step, t_next == vec3<f32>(result.t));
     }
   }
 
@@ -128,19 +130,17 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   return result;
 }
 
-/// Trusts that you submit a cell which fits within the root and that root.height != 0
+/// Trusts that you submit a cell which fits within the root
 fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> vec2<u32> {
   var cur_voxel = root;
   loop {
+    if (cur_voxel[1] == 0) { break; }
     let shift = cur_voxel[1] - 1;
-    let childx = (cell.x >> shift) & 1;
-    let childy = (cell.y >> shift) & 1;
-    let childz = (cell.z >> shift) & 1;
-    let next_index = voxels[cur_voxel[0]].children[childz << 2 | childy << 1 | childx];
+    let child = cell >> vec3<u32>(shift) & vec3<u32>(1);
+    let next_index = voxels[cur_voxel[0]].children[child.z << 2 | child.y << 1 | child.x];
     if (next_index == cur_voxel[0]) { break; }
     cur_voxel[0] = next_index;
     cur_voxel[1] -= 1;
-    if (cur_voxel[1] == 0) { break; }
   }
   return cur_voxel;
 }
