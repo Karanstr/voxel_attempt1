@@ -94,12 +94,10 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
 
   let step = vec3<i32>(sign(dir));
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
-  let t_delta = abs(inv_dir);
+  let t_step = abs(inv_dir);
   let rounded_pos = select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0));
-  // Distance to first boundary
-  var t_max = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
+  var t_next = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
   
-  // Using rounded pos here is what was screwing us??
   var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
   for (var i = 0u; i < 100u; i++) {
     // We can't sample if we're outside of the grid (for now)
@@ -114,15 +112,15 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
-    let sparse_max = t_max + t_delta * vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
-    let min_t = min(min(sparse_max.x, sparse_max.y), sparse_max.z);
+    let sparse_next = t_next + t_step * vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
+    let last_t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
   
     loop {
-      if (result.t + FP_BUMP >= min_t) { break; }
-      result.t = min(min(t_max.x, t_max.y), t_max.z);
-      result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), t_max == vec3<f32>(result.t));
+      if (result.t + FP_BUMP >= last_t) { break; }
+      result.t = min(min(t_next.x, t_next.y), t_next.z);
+      result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), t_next == vec3<f32>(result.t));
       cur_voxel += step * vec3<i32>(result.normal);
-      t_max += t_delta * result.normal;
+      t_next += t_step * result.normal;
     }
   }
 
@@ -130,7 +128,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   return result;
 }
 
-// Trusts that you submit a cell which fits within the root and that root.height != 0
+/// Trusts that you submit a cell which fits within the root and that root.height != 0
 fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> vec2<u32> {
   var cur_voxel = root;
   loop {
