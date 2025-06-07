@@ -44,17 +44,15 @@ struct RayHit {
 }
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
-  let cells = (1u << data.render_root[1]) - 1;
-  // If height is 3: 0,0,0 -> 7,7,7
-  let bounds = vec3<f32>(f32(cells));
 
   // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
   let uv = 2.0 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
 
   // We don't need to normalize this, all we care about is the ratio
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
-  
-  let hit = dda_vox(data.cam_pos, ray_dir, bounds);
+
+  let cells = (1u << data.render_root[1]) - 1;
+  let hit = dda_vox(data.cam_pos, ray_dir, vec3<i32>(cells));
     
   if (hit.hit) {
     let hit_pos = data.cam_pos + ray_dir * (hit.t + FP_BUMP);
@@ -64,7 +62,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
     // Outline each cube
-    // if (edge_count >= 2) { return vec4<f32>(0.0); }
+    if (edge_count >= 2) { return vec4<f32>(0.0); }
 
     // Base color from normal
     let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
@@ -84,46 +82,48 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   }
 }
 
-fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
+fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<i32>) -> RayHit {
   var result = RayHit();
   result.hit = false;
   result.t = 0.0;
 
   // We only march through grids for now, not into them.
-  if (any(clamp(camera_pos, vec3<f32>(0.0), bounds) != camera_pos)) { return result; }
+  if (any(clamp(camera_pos, vec3<f32>(0.0), vec3<f32>(bounds + 1)) != camera_pos)) { return result; }
 
   let step = vec3<i32>(sign(dir));
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   let t_step = abs(inv_dir);
   let rounded_pos = select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0));
-  // This can maybe be initialized at 0?
   var t_next = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
   
+  // We can't sample if we're outside of the grid, initial sample is required to get first height for the step
   var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
+  if (any(clamp(cur_voxel, vec3<i32>(0), bounds) != cur_voxel)) { return result; }
+  result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
+
   for (var i = 0u; i < 100u; i++) {
-    // We can't sample if we're outside of the grid (for now)
-    if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds)) != cur_voxel)) { break; }
-
-    result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
-    if (result.voxel[0] != 0u && result.t != 0.0) {
-      result.hit = true;
-      return result;
-    }
-
     let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
-    let blocks_to_march = vec3<f32>(select(offset, mask - offset, vec3<i32>(0) < step)) + 1; 
-    let sparse_next = t_next + t_step * (blocks_to_march - 1);
+    let additional_blocks = vec3<f32>(select(-offset, mask - offset, vec3<i32>(0) < step)); 
+    let sparse_next = t_next + inv_dir * additional_blocks;
     let last_t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
     result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), sparse_next == vec3<f32>(last_t));
-  
+
     loop {
       if (result.t + FP_BUMP >= last_t) { break; }
       result.t = min(min(t_next.x, t_next.y), t_next.z);
       cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3<f32>(result.t));
       t_next = select(t_next, t_next + t_step, t_next == vec3<f32>(result.t));
     }
+
+    if (any(clamp(cur_voxel, vec3<i32>(0), bounds) != cur_voxel)) { break; }
+    result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
+    if (result.voxel[0] != 0u) {
+      result.hit = true;
+      return result;
+    }
+
   }
 
   // No hit found
