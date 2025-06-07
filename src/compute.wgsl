@@ -133,10 +133,8 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<i32>) -> RayHit {
 /// Trusts that you submit a cell which fits within the root
 fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> vec2<u32> {
   var cur_voxel = root;
-  loop {
-    if (cur_voxel[1] == 0) { break; }
-    let shift = cur_voxel[1] - 1;
-    let child = cell >> vec3<u32>(shift) & vec3<u32>(1);
+  while cur_voxel[1] != 0 {
+    let child = cell >> vec3<u32>(cur_voxel[1] - 1) & vec3<u32>(1);
     let next_index = voxels[cur_voxel[0]].children[child.z << 2 | child.y << 1 | child.x];
     if (next_index == cur_voxel[0]) { break; }
     cur_voxel[0] = next_index;
@@ -144,3 +142,4 @@ fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> vec2<u32> {
   }
   return cur_voxel;
 }
+
