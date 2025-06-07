@@ -95,14 +95,11 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
   let step = vec3<i32>(sign(dir));
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   let t_delta = abs(inv_dir);
-
+  let rounded_pos = select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0));
   // Distance to first boundary
-  var t_max = select(
-    select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0)) - camera_pos,
-    vec3<f32>(10000000.0),
-    step == vec3<i32>(0)
-  ) * inv_dir;
-
+  var t_max = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
+  
+  // Using rounded pos here is what was screwing us??
   var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
   for (var i = 0u; i < 100u; i++) {
     // We can't sample if we're outside of the grid (for now)
@@ -119,7 +116,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<f32>) -> RayHit {
     let offset = cur_voxel & mask;
     let sparse_max = t_max + t_delta * vec3<f32>(select(offset, mask - offset, step > vec3<i32>(0)));
     let min_t = min(min(sparse_max.x, sparse_max.y), sparse_max.z);
-
+  
     loop {
       if (result.t + FP_BUMP >= min_t) { break; }
       result.t = min(min(t_max.x, t_max.y), t_max.z);
