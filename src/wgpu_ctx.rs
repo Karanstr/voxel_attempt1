@@ -12,7 +12,8 @@ const WORKGROUP_SQUARE: u32 = 8;
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Data {
-    render_root: [u32; 2],
+    obj_head: u32,
+    obj_bounds: f32,
     cam_aspect: f32,
     cam_tan_fov: f32,
     cam_pos: [f32; 3],
@@ -26,15 +27,16 @@ struct Data {
 }
 impl Data {
     fn new(
-      root_idx:u32,
-      root_height:u32,
+      obj_head:u32,
+      obj_bounds:f32,
       camera_pos:glam::Vec3,
       basis: [glam::Vec3; 3],
       aspect_ratio: f32,
       fov: f32,
     ) -> Self {
     Self {
-      render_root: [root_idx, root_height],
+      obj_head,
+      obj_bounds,
       cam_aspect: aspect_ratio,
       cam_tan_fov: (fov / 2.).tan(),
       cam_pos: camera_pos.into(),
@@ -322,8 +324,8 @@ impl<'window> WgpuCtx<'window> {
 
     // Probably extract at some point, but I don't care about cloning so few values rn
     let data = Data::new(
-      game_data.render_root.idx,
-      game_data.render_root.height,
+      game_data.obj_data.head,
+      game_data.obj_data.bounds,
       game_data.camera.position,
       game_data.camera.basis(),
       game_data.camera.aspect_ratio,

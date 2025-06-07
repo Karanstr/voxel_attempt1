@@ -141,5 +141,10 @@ impl Node for BasicNode3d {
   fn set(&mut self, child:Self::Children, index:Index) {
     self.children[child.to_index()] = index
   }
+  fn with_child(&self, child: Self::Children, index:Index) -> Self {
+      let mut new = self.clone();
+      new.set(child, index);
+      new
+  }
 }
 impl GraphNode for BasicNode3d {}

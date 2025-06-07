@@ -4,13 +4,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use vec_mem_heap::prelude::*;
 
 const CHILD_COUNT : usize = 8;
-type Index = u32;
-
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, derive_new::new)]
-pub struct Pointer {
-  pub idx : Index,
-  pub height : u32
-}
+pub type Index = u32;
 
 pub trait Path<T : Childs> {
   fn new() -> Self;
@@ -34,6 +28,7 @@ pub trait Node : Clone + std::fmt::Debug {
   fn new(children:&[Index]) -> Self;
   fn get(&self, child: Self::Children) -> Index;
   fn set(&mut self, child: Self::Children, index:Index);
+  fn with_child(&self, child: Self::Children, index:Index) -> Self;
 }
 // GraphNodes are nodes which can be hashed and copied, making them valid for SDG storage
 pub trait GraphNode : Node + Copy + std::hash::Hash + Eq {}
@@ -47,6 +42,11 @@ impl<T> Node for Option<T> where T: Node {
   fn set(&mut self, child:Self::Children, index:Index) {
     self.as_mut().unwrap().set(child, index)
   }
+  fn with_child(&self, child: Self::Children, index:Index) -> Self {
+    let mut new = self.clone().unwrap();
+    new.set(child, index);
+    Some(new)
+  }
 }
 
 pub struct SparseDirectedGraph<T: GraphNode> {
@@ -54,6 +54,7 @@ pub struct SparseDirectedGraph<T: GraphNode> {
   pub index_lookup : HashMap<T, Index>,
   leaf_count : u8,
 }
+// I have a feeling we are gonna dump leaf count and just make a 'request leaf' function
 impl<T: GraphNode> SparseDirectedGraph<T> {
   // Utility
   pub fn new(leaf_count:u8) -> Self {
@@ -69,27 +70,23 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     instance
   }
 
-  pub fn is_leaf(&self, index:Index) -> bool {
-    index < self.leaf_count as Index
-  }
+  pub fn is_leaf(&self, index:Index) -> bool { index < self.leaf_count as Index }
 
-  fn get_trail(&self, start:Index, path:&[T::Children]) -> Vec<Index>  {
-    let mut trail = vec![start];
+  /// Returns a trail with length path.len() + 1.
+  /// This means trail\[path.len()] is the final parent of the node the path leads to and trail\[path.len() + 1] is the node the path leads to.
+  ///
+  /// Panics on invalid path (which I'm pretty sure is impossible)
+  fn get_trail(&self, head:Index, path:&[T::Children]) -> Vec<Index>  {
+    let mut trail = Vec::with_capacity(path.len() + 1);
+    trail.push(head);
     for step in 0 .. path.len() {
-      let parent = trail[step];
-      match self.child(parent, path[step]) {
-        Ok( child ) if child != parent => trail.push(child),
-        Ok(_) => break,
-        Err(error) => panic!("Trail encountered a fatal error, {error:?}")
-      };
+      trail.push( self.child(trail[step], path[step]).unwrap() );
     }
     trail 
   }
 
   // Private functions used for writing
-  fn find_index(&self, node:&T) -> Option<Index> {
-    self.index_lookup.get(node).copied()
-  }
+  fn find_index(&self, node:&T) -> Option<Index> { self.index_lookup.get(node).copied() }
 
   fn add_node(&mut self, node:T) -> Index {
     let index = self.nodes.push(node.clone()) as Index;
@@ -97,90 +94,62 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     index
   }
 
-  fn propagate_change(
-    &mut self,
-    path: &[T::Children],
-    trail: &[Index],
-    mut cur_pointer: Pointer,
-    mut old_parent: Index,
-  ) -> Result<(Index, Pointer, Option<T>), AccessError> {
+  /// Returns (Head of deleted tree, Head of new tree, Option<If any node along trail has only one reference, the node we should replace that node with>)
+  fn propagate_change(&mut self, path: &[T::Children], trail: &[Index], mut new_child: Index,) -> (Index, Index, Option<T>) {
     for cur_depth in (0 .. path.len()).rev() {
-      // Trailing off early means we're at a leaf, we can just repeat that leaf and get sparsity by default
-      old_parent = if cur_depth < trail.len() { trail[cur_depth] } else { *trail.last().unwrap() };
-      let new_parent_node =  {
-        let mut new_parent = self.node(old_parent)?.clone();
-        new_parent.set(path[cur_depth], cur_pointer.idx);
-        new_parent
-      };
-      cur_pointer.height += 1;
-      cur_pointer.idx = match self.find_index(&new_parent_node) {
-        Some(pointer) => pointer,
-        None => {
-          if self.nodes.status(old_parent as usize).unwrap() == 2 && !self.is_leaf(old_parent) {
-            cur_pointer.idx = old_parent;
-            return Ok((old_parent, cur_pointer, Some(new_parent_node)))
-          } else { self.add_node(new_parent_node) }
-        }
+      let cur_idx = trail[cur_depth];
+      let new_node = self.node(cur_idx).unwrap().with_child(path[cur_depth], new_child);
+      new_child = if let Some(idx) = self.find_index(&new_node) { 
+        idx 
+      } else if self.nodes.status(cur_idx as usize).unwrap() == 2 && !self.is_leaf(cur_idx) {
+        return (cur_idx, cur_idx, Some(new_node))
+      } else {
+        self.add_node(new_node)
       };
     };
-    Ok((old_parent, cur_pointer, None))
+    (trail[0], new_child, None)
   }
 
   // Public functions used for writing
-  pub fn set_node(&mut self, start:Pointer, path:&[T::Children], new_pointer:Index) -> Result<Pointer, AccessError> {
-    if let Some(pointer) = self.descend(start, path) { 
-      if pointer.idx == new_pointer { return Ok(start) }
-    } else { panic!("Unspecified Path") }
-    let trail = self.get_trail(start.idx, path);
-    let (old_parent, cur_pointer, early_node) = self.propagate_change(
-      path,
-      &trail[..],
-      Pointer::new(new_pointer, start.height - path.len() as u32),
-      start.idx,
-    )?;
-    let last_leaf = self.leaf_count as usize - 1;
-    let old_nodes = bfs_nodes(self.nodes.data(), old_parent, last_leaf); 
-    let early_exit = match early_node { Some(node) => {
-      self.index_lookup.remove(&self.nodes.replace(old_parent as usize, node.clone()).unwrap());
-      self.index_lookup.insert(node, old_parent);
-      true
-    } None => { false }};
-    for index in bfs_nodes(self.nodes.data(), cur_pointer.idx, last_leaf) {
+  pub fn set_node(&mut self, head:Index, path:&[T::Children], new_idx:Index) -> Index {
+    let trail = self.get_trail(head, path);
+    if *trail.last().unwrap() == new_idx { return head }
+    let (head_removed, head_added, replace) = self.propagate_change(path, &trail, new_idx);
+    let culled_nodes = bfs_nodes(self.nodes.data(), head_removed, self.leaf_count as usize - 1); 
+    let edit_head = if let Some(new_node) = replace {
+      let old_node = self.nodes.replace(head_removed as usize, new_node.clone()).unwrap();
+      self.index_lookup.remove(&old_node);
+      self.index_lookup.insert(new_node, head_added);
+      head
+    } else { head_added };
+    for index in bfs_nodes(self.nodes.data(), head_added, self.leaf_count as usize - 1) {
       self.nodes.add_ref(index as usize).unwrap()
     }
-    self.mass_remove(&old_nodes);
-    // Returning start because the root node never changes
-    if early_exit { Ok(start) } else { Ok(cur_pointer) }
-  }
-
-  pub fn mass_remove(&mut self, indices:&[Index]) {
-    for index in indices {
+    for index in &culled_nodes {
       self.nodes.remove_ref(*index as usize).unwrap();
       if self.nodes.status(*index as usize).unwrap() == 1 && !self.is_leaf(*index) {
         self.index_lookup.remove(&self.nodes.remove_ref(*index as usize).unwrap().unwrap());
       }
     }
+    edit_head
   }
 
   // Public functions used for reading
-  pub fn node(&self, pointer:Index) -> Result<&T, AccessError> {
-    self.nodes.get(pointer as usize)
+  pub fn node(&self, idx:Index) -> Result<&T, AccessError> {
+    self.nodes.get(idx as usize)
   }
 
-  pub fn child(&self, node:Index, child:T::Children) -> Result<Index, AccessError> {
-    Ok( self.node(node)?.get(child) )
+  pub fn child(&self, idx:Index, child:T::Children) -> Result<Index, AccessError> {
+    Ok( self.node(idx)?.get(child) )
   }
 
-  pub fn descend(&self, start:Pointer, path:&[T::Children]) -> Option<Pointer> {
-    if start.height < path.len() as u32 { panic!("Path is longer than start allows.") }
-    let trail = self.get_trail(start.idx, path);
-    let node_pointer = trail.last()?;
-    Some(Pointer::new(*node_pointer, start.height - (trail.len() as u32 - 1)))
+  pub fn descend(&self, head:Index, path:&[T::Children]) -> Index {
+    *self.get_trail(head, path).last().unwrap()
   }
 
-  pub fn get_root(&mut self, leaf:Index, height:u32) -> Pointer {
+  pub fn get_root(&mut self, leaf:Index) -> Index {
     self.nodes.add_ref(leaf as usize).unwrap();
-    Pointer::new(leaf, height)
+    leaf
   }
 
 }
@@ -188,35 +157,34 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
 
 #[derive(Serialize, Deserialize)]
 struct TreeStorage<N : Node> {
-  root: Pointer,
+  head: Index,
   memory: Vec<N>,
 }
-// Assumes constant leaf count. Eventually add more metadata
+
+// Add metadata for all sorts of whatever I feel like
+/// Assumes constant leaf count
 impl<T: GraphNode + Serialize + DeserializeOwned> SparseDirectedGraph<T> {
-  pub fn save_object_json(&self, start:Pointer) -> String {
+  pub fn save_object_json(&self, head:Index) -> String {
     let mut object_graph = Self::new(self.leaf_count);
-    let root_index = object_graph.clone_graph(self.nodes.data(), start.idx);
+    let head_index = object_graph.clone_graph(self.nodes.data(), head);
     let storage = TreeStorage {
-      root : Pointer::new(root_index, start.height),
-      memory : self.nodes.data().iter().map(|node| {
-        let Some(data) = node else { return None };
-        Some(data.clone())
-      }).collect(),
+      head : head_index,
+      memory : object_graph.nodes.data().clone()
     };
     serde_json::to_string(&storage).unwrap()
   }
 
   // Currently requires the nodetype of both graph and data to be the same.
-  pub fn load_object_json(&mut self, json:String) -> Pointer {
+  pub fn load_object_json(&mut self, json:String) -> Index {
     let temp:TreeStorage<T> = serde_json::from_str(&json).unwrap();
-    Pointer::new(self.clone_graph(&temp.memory, temp.root.idx), temp.root.height)
+    self.clone_graph(&temp.memory, temp.head)
   }
 
   // Assumes equal leaf count (between the two graphs)
-  fn clone_graph<N : Node> (&mut self, from:&Vec<N>, start:Index) -> Index {
+  fn clone_graph<N : Node> (&mut self, from:&Vec<N>, head:Index) -> Index {
     let mut remapped = HashMap::new();
     for i in 0 .. self.leaf_count as Index { remapped.insert(i, i); }
-    for pointer in bfs_nodes(from, start, (self.leaf_count - 1) as usize).into_iter().rev() {
+    for pointer in bfs_nodes(from, head, (self.leaf_count - 1) as usize).into_iter().rev() {
       if !remapped.contains_key(&pointer) {
         let mut new_kids = Vec::with_capacity(CHILD_COUNT);
         for child in N::Children::all() {
@@ -227,14 +195,14 @@ impl<T: GraphNode + Serialize + DeserializeOwned> SparseDirectedGraph<T> {
       }
       self.nodes.add_ref(*remapped.get(&pointer).unwrap() as usize).unwrap();
     }
-    *remapped.get(&start).unwrap() as Index
+    *remapped.get(&head).unwrap() as Index
   }
 
 }
 
 // Utility function
-pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, start:Index, last_leaf:usize) -> Vec<Index> {
-  let mut queue = VecDeque::from([start]);
+pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, last_leaf:usize) -> Vec<Index> {
+  let mut queue = VecDeque::from([head]);
   let mut bfs_indexes = Vec::new();
   while let Some(index) = queue.pop_front() {
     bfs_indexes.push(index);
@@ -246,21 +214,3 @@ pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, start:Index, last_leaf:usize) -> Vec<In
   }
   bfs_indexes
 }
-
-// Move to a geometry area?
-// impl<T, const D: usize> super::dag::SparseDirectedGraph<T, D> where T : super::dag::GraphNode<D> {
-//     pub fn dfs_leaf_cells(&self, start:Pointer) -> Vec<CellData> {
-//         let mut stack = Vec::from([(start.idx, ZorderPath::root())]);
-//         let mut leaves = Vec::new();
-//         while let Some((pointer, zorder)) = stack.pop() {
-//             if self.is_leaf(pointer) {
-//                 leaves.push(CellData::new(Pointer::new(pointer, start.height - zorder.depth), zorder.to_cell()));
-//             } else { for i in 0 .. 4 {
-//                     let children = self.node(pointer).unwrap().children();
-//                     stack.push((children[i], zorder.step_down(i as u32)));
-//                 }
-//             }
-//         }
-//         leaves
-//     }
-// }

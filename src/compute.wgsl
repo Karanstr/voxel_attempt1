@@ -5,8 +5,8 @@ const FP_BUMP: f32 = 0.0001;
 var output_tex: texture_storage_2d<rgba8unorm, write>;
 
 struct Data {
-  // [Idx, Height]
-  render_root: vec2<u32>,
+  obj_head: u32,
+  obj_bounds: f32,
   aspect_ratio: f32,
   tan_fov: f32,
   cam_pos: vec3<f32>,
@@ -44,19 +44,15 @@ struct RayHit {
 }
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
-
   // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
   let uv = 2.0 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
-
-  // We don't need to normalize this, all we care about is the ratio
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
 
-  let cells = (1u << data.render_root[1]) - 1;
-  let hit = dda_vox(data.cam_pos, ray_dir, vec3<i32>(cells));
-    
+  let hit = dda_vox(data.cam_pos, ray_dir, data.obj_bounds);
   if (hit.hit) {
     let hit_pos = data.cam_pos + ray_dir * (hit.t + FP_BUMP);
-    let block_size = f32(1u << hit.voxel[1]);
+    // let block_size = data.obj_bounds / f32(1 << hit.voxel[1]);
+    let block_size = f32(1 << hit.voxel[1]);
     let percent_of_block = fract(hit_pos / block_size);
 
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
@@ -82,13 +78,14 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   }
 }
 
-fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<i32>) -> RayHit {
+// A minimum size dda step moves a distance of 1 unit right now.
+fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
   var result = RayHit();
   result.hit = false;
   result.t = 0.0;
 
   // We only march through grids for now, not into them.
-  if (any(clamp(camera_pos, vec3<f32>(0.0), vec3<f32>(bounds + 1)) != camera_pos)) { return result; }
+  if (any(clamp(camera_pos, vec3<f32>(0.0), vec3<f32>(bounds)) != camera_pos)) { return result; }
 
   let step = vec3<i32>(sign(dir));
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
@@ -98,8 +95,8 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<i32>) -> RayHit {
   
   // We can't sample if we're outside of the grid, initial sample is required to get first height for the step
   var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
-  if (any(clamp(cur_voxel, vec3<i32>(0), bounds) != cur_voxel)) { return result; }
-  result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
+  if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds) - 1) != cur_voxel)) { return result; }
+  result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
 
   for (var i = 0u; i < 100u; i++) {
     let block_size = 1 << result.voxel[1];
@@ -117,8 +114,8 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<i32>) -> RayHit {
       t_next = select(t_next, t_next + t_step, t_next == vec3<f32>(result.t));
     }
 
-    if (any(clamp(cur_voxel, vec3<i32>(0), bounds) != cur_voxel)) { break; }
-    result.voxel = vox_read(data.render_root, vec3<u32>(cur_voxel));
+    if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds) - 1) != cur_voxel)) { break; }
+    result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
     if (result.voxel[0] != 0u) {
       result.hit = true;
       return result;
@@ -131,15 +128,16 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: vec3<i32>) -> RayHit {
 }
 
 /// Trusts that you submit a cell which fits within the root
-fn vox_read(root: vec2<u32>, cell: vec3<u32>) -> vec2<u32> {
-  var cur_voxel = root;
-  while cur_voxel[1] != 0 {
-    let child = cell >> vec3<u32>(cur_voxel[1] - 1) & vec3<u32>(1);
-    let next_index = voxels[cur_voxel[0]].children[child.z << 2 | child.y << 1 | child.x];
-    if (next_index == cur_voxel[0]) { break; }
-    cur_voxel[0] = next_index;
-    cur_voxel[1] -= 1;
+fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
+  var cur_idx = head;
+  var height = 5u;
+  while height != 0 {
+    let child = cell >> vec3<u32>(height - 1) & vec3<u32>(1);
+    let next_idx = voxels[cur_idx].children[child.z << 2 | child.y << 1 | child.x];
+    if (next_idx == cur_idx) { break; }
+    cur_idx = next_idx;
+    height -= 1;
   }
-  return cur_voxel;
+  return vec2<u32>(cur_idx, height);
 }
 

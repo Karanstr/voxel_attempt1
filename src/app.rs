@@ -1,5 +1,5 @@
 use crate::graph::basic_node3d::{BasicNode3d, BasicPath3d};
-use crate::graph::sdg::{Pointer, SparseDirectedGraph, Path};
+use crate::graph::sdg::{Index, SparseDirectedGraph, Path};
 use crate::wgpu_ctx::WgpuCtx;
 use crate::camera::Camera;
 use std::sync::Arc;
@@ -13,32 +13,45 @@ use glam::{Vec2, Vec3, UVec3};
 use std::cell::OnceCell;
 use std::collections::VecDeque;
 
-pub struct GameData {
-  pub camera: Camera,
-  pub sdg: SparseDirectedGraph<BasicNode3d>,
-  pub render_root: Pointer,
+pub struct ObjectData {
+  pub head: Index,
+  pub bounds: f32,
 }
-impl Default for GameData {
-  fn default() -> Self {
-    let mut sdg = SparseDirectedGraph::new(4);
+impl ObjectData {
+  fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
+    let mut head = sdg.get_root(0);
     let height = 5;
-    let mut render_root = sdg.get_root(0, height);
     let size = 2u32.pow(height);
     for y in 0 .. size {
       for x in 0 .. size {
         for z in 0 .. size {
           if x < size - y && x >= y && z < size - y && z >= y {
             let path = BasicPath3d::from_cell(UVec3::new(x,y,z), height).steps();
-            render_root = sdg.set_node(render_root, &path, 1).unwrap()
+            head = sdg.set_node(head, &path, 1)
           }
         }
       }
     }
+    ObjectData {
+      head,
+      bounds: size as f32
+    }
+  }
+}
 
+pub struct GameData {
+  pub camera: Camera,
+  pub sdg: SparseDirectedGraph<BasicNode3d>,
+  pub obj_data: ObjectData,
+}
+impl Default for GameData {
+  fn default() -> Self {
+    let mut sdg = SparseDirectedGraph::new(4);
+    let obj_data = ObjectData::new(&mut sdg);
     Self {
       camera: Camera::default(),
       sdg,
-      render_root
+      obj_data
     }
   }
 }
