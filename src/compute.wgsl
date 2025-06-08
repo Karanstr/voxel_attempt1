@@ -44,9 +44,13 @@ struct RayHit {
 }
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
-  // Transform + Scale from <0,1> to <-1, 1> then scale by aspect ratio
-  let uv = 2.0 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
+  // Transform + Scale from <0,1> to <-1, 1>, then scale by aspect ratio
+  let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
+  
+  // For now we can't march into a grid, just through it.
+  if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { return vec4<f32>(0.0); }
+  // let percent_pos = data.cam_pos
 
   let hit = dda_vox(data.cam_pos, ray_dir, data.obj_bounds);
   if (hit.hit) {
@@ -84,34 +88,28 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
   result.hit = false;
   result.t = 0.0;
 
-  // We only march through grids for now, not into them.
-  if (any(clamp(camera_pos, vec3<f32>(0.0), vec3<f32>(bounds)) != camera_pos)) { return result; }
-
   let step = vec3<i32>(sign(dir));
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   let t_step = abs(inv_dir);
   let rounded_pos = select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0));
   var t_next = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
   
-  // We can't sample if we're outside of the grid, initial sample is required to get first height for the step
   var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
-  if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds) - 1) != cur_voxel)) { return result; }
   result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
-
   for (var i = 0u; i < 100u; i++) {
     let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
     let additional_blocks = vec3<f32>(select(-offset, mask - offset, vec3<i32>(0) < step)); 
     let sparse_next = t_next + inv_dir * additional_blocks;
-    let last_t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
-    result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), sparse_next == vec3<f32>(last_t));
+    result.t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
+    result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), sparse_next == vec3<f32>(result.t));
 
     loop {
-      if (result.t + FP_BUMP >= last_t) { break; }
-      result.t = min(min(t_next.x, t_next.y), t_next.z);
-      cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3<f32>(result.t));
-      t_next = select(t_next, t_next + t_step, t_next == vec3<f32>(result.t));
+      let t_cur = min(min(t_next.x, t_next.y), t_next.z);
+      cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3<f32>(t_cur));
+      t_next = select(t_next, t_next + t_step, t_next == vec3<f32>(t_cur));
+      if (t_cur + FP_BUMP >= result.t) { break; }
     }
 
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds) - 1) != cur_voxel)) { break; }
@@ -120,9 +118,7 @@ fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
       result.hit = true;
       return result;
     }
-
   }
-
   // No hit found
   return result;
 }
