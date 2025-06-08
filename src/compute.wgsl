@@ -44,13 +44,12 @@ struct RayHit {
 }
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
+  // For now we can't march into a grid, just through it.
+  if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { return vec4<f32>(0.0); }
+
   // Transform + Scale from <0,1> to <-1, 1>, then scale by aspect ratio
   let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
-  
-  // For now we can't march into a grid, just through it.
-  if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { return vec4<f32>(0.0); }
-  // let percent_pos = data.cam_pos
 
   let hit = dda_vox(data.cam_pos, ray_dir, data.obj_bounds);
   if (hit.hit) {
@@ -86,25 +85,44 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
 fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
   var result = RayHit();
   result.hit = false;
-  result.t = 0.0;
+
+  // inv_dir represents the ratio of movement
+  // practically, the smallest step we're allowed to take: 1 / (1 << 31). Maybe 1 << 30? I think we might need a bit to track overflow?
+
+  // Order of operations should be as follows:
+  // Setup:
+  // - Sample current depth
+  // - Determine when next wall intersections occur at current depth
+  // Loop:
+  // - Determine closest wall intersections
+  // - Take the step
+  // - Sample voxel, return if condition is met
 
   let step = vec3<i32>(sign(dir));
+  var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
+  result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
+  
+
+
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   let t_step = abs(inv_dir);
   let rounded_pos = select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0));
   var t_next = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
   
-  var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
-  result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
   for (var i = 0u; i < 100u; i++) {
     let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
-    let additional_blocks = vec3<f32>(select(-offset, mask - offset, vec3<i32>(0) < step)); 
-    let sparse_next = t_next + inv_dir * additional_blocks;
+    let additional_blocks = vec3<i32>(select(-offset, mask - offset, vec3<i32>(0) < step));
+    let sparse_next = t_next + inv_dir * vec3<f32>(additional_blocks);
     result.t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
     result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), sparse_next == vec3<f32>(result.t));
-
+    
+    // Sparse skipping
+    t_next = select(t_next, sparse_next, sparse_next == vec3<f32>(result.t));
+    cur_voxel = select(cur_voxel, cur_voxel + additional_blocks, sparse_next == vec3<f32>(result.t));
+    
+    // Catchup loop
     loop {
       let t_cur = min(min(t_next.x, t_next.y), t_next.z);
       cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3<f32>(t_cur));

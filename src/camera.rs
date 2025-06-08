@@ -17,11 +17,11 @@ pub struct Camera {
 impl Default for Camera {
   fn default() -> Self {
     Self {
-      position: Vec3::new(16.0, 20.0, 16.0),
+      position: Vec3::new(16.0, 30.0, 16.0),
       yaw: 0.0,
       pitch: -PI/2. + 0.001,
       aspect_ratio: 1.0,
-      fov: 1.4,
+      fov: 1.0,
     }
   }
 }
