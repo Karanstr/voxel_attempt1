@@ -53,7 +53,6 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     let t = aabb_intersect(data.cam_pos, 1.0 / ray_dir, vec3<f32>(data.obj_bounds) );
     if t > 0 { ray_origin = data.cam_pos + ray_dir * t; } else { return vec4<f32>(0.0); }
   } 
-
   let hit = dda_vox(ray_origin, ray_dir, data.obj_bounds, all(ray_origin == data.cam_pos));
   if (hit.hit) {
     let hit_pos = ray_origin + ray_dir * (hit.t + FP_BUMP);
@@ -64,7 +63,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
     // Outline each cube
-    if (edge_count >= 2) { return vec4<f32>(0.0); }
+    // if (edge_count >= 2) { return vec4<f32>(0.0); }
 
     // Base color from normal
     let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
