@@ -51,7 +51,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   var ray_origin = data.cam_pos;
   if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { 
     let t = aabb_intersect(data.cam_pos, 1.0 / ray_dir, vec3<f32>(data.obj_bounds) );
-    if t >= 0 { ray_origin = data.cam_pos + ray_dir * t; } else { return vec4<f32>(0.0); }
+    if t > 0 { ray_origin = data.cam_pos + ray_dir * t; } else { return vec4<f32>(0.0); }
   } 
 
   let hit = dda_vox(ray_origin, ray_dir, data.obj_bounds, all(ray_origin == data.cam_pos));
