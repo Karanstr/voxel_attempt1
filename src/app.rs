@@ -32,6 +32,7 @@ impl ObjectData {
         }
       }
     }
+    // sdg.nodes.trim();
     ObjectData {
       head,
       bounds: size as f32
@@ -46,7 +47,7 @@ pub struct GameData {
 }
 impl Default for GameData {
   fn default() -> Self {
-    let mut sdg = SparseDirectedGraph::new(4);
+    let mut sdg = SparseDirectedGraph::new(2);
     let obj_data = ObjectData::new(&mut sdg);
     Self {
       camera: Camera::default(),

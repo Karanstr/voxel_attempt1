@@ -44,16 +44,19 @@ struct RayHit {
 }
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
-  // For now we can't march into a grid, just through it.
-  if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { return vec4<f32>(0.0); }
-
   // Transform + Scale from <0,1> to <-1, 1>, then scale by aspect ratio
   let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
 
-  let hit = dda_vox(data.cam_pos, ray_dir, data.obj_bounds);
+  var ray_origin = data.cam_pos;
+  if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { 
+    let t = aabb_intersect(ray_origin, 1.0 / ray_dir, vec3<f32>(data.obj_bounds) );
+    if t >= 0 { ray_origin += ray_dir * t - sign(ray_dir) * FP_BUMP * 2; }
+  }
+
+  let hit = dda_vox(ray_origin, ray_dir, data.obj_bounds);
   if (hit.hit) {
-    let hit_pos = data.cam_pos + ray_dir * (hit.t + FP_BUMP);
+    let hit_pos = ray_origin + ray_dir * (hit.t + FP_BUMP);
     // let block_size = data.obj_bounds / f32(1 << hit.voxel[1]);
     let block_size = f32(1 << hit.voxel[1]);
     let percent_of_block = fract(hit_pos / block_size);
@@ -82,32 +85,18 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
 }
 
 // A minimum size dda step moves a distance of 1 unit right now.
-fn dda_vox(camera_pos: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
+fn dda_vox(ray_origin: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
   var result = RayHit();
   result.hit = false;
 
-  // inv_dir represents the ratio of movement
-  // practically, the smallest step we're allowed to take: 1 / (1 << 31). Maybe 1 << 30? I think we might need a bit to track overflow?
-
-  // Order of operations should be as follows:
-  // Setup:
-  // - Sample current depth
-  // - Determine when next wall intersections occur at current depth
-  // Loop:
-  // - Determine closest wall intersections
-  // - Take the step
-  // - Sample voxel, return if condition is met
-
   let step = vec3<i32>(sign(dir));
-  var cur_voxel = vec3<i32>(floor(camera_pos + FP_BUMP * vec3<f32>(step)));
+  var cur_voxel = vec3<i32>(floor(ray_origin + FP_BUMP * vec3<f32>(step)));
   result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
-  
-
 
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
   let t_step = abs(inv_dir);
-  let rounded_pos = select(ceil(camera_pos + FP_BUMP), floor(camera_pos - FP_BUMP), step < vec3<i32>(0));
-  var t_next = select(rounded_pos - camera_pos, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
+  let rounded_pos = select(ceil(ray_origin + FP_BUMP), floor(ray_origin - FP_BUMP), step < vec3<i32>(0));
+  var t_next = select(rounded_pos - ray_origin, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
   
   for (var i = 0u; i < 100u; i++) {
     let block_size = 1 << result.voxel[1];
@@ -153,5 +142,20 @@ fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
     height -= 1;
   }
   return vec2<u32>(cur_idx, height);
+}
+
+// I'm not responsible for whatever nonsense chatgpt put in this function. It works, and until I start caring it'll keep working this way.
+fn aabb_intersect(origin: vec3<f32>, inv_dir: vec3<f32>, max_bounds: vec3<f32>) -> f32 {
+  let t1 = (vec3<f32>(0.0) - origin) * inv_dir;
+  let t2 = (max_bounds - origin) * inv_dir;
+
+  let t_near = max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z));
+  let t_far  = min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z));
+
+  if t_near > t_far || t_far < 0.0 {
+    return -1.0;
+  }
+
+  return max(t_near, 0.0);
 }
 

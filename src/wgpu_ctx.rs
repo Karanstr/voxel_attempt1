@@ -153,8 +153,8 @@ impl<'window> WgpuCtx<'window> {
     // Stores BasicNode {...}s
     let voxel_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Voxel Buffer"),
-      // Each BasicNode is 32 Bytes, we want to store up to 64 of them
-      size: 32 * 64,
+      // Each BasicNode is 32 Bytes, so we store size / 32 of them
+      size: 1760,
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false
     });

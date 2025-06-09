@@ -6,6 +6,7 @@ use vec_mem_heap::prelude::*;
 const CHILD_COUNT : usize = 8;
 pub type Index = u32;
 
+#[allow(dead_code)]
 pub trait Path<T : Childs> {
   fn new() -> Self;
   fn steps(&self) -> Vec<T>;
@@ -143,7 +144,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     Ok( self.node(idx)?.get(child) )
   }
 
-  pub fn descend(&self, head:Index, path:&[T::Children]) -> Index {
+  pub fn _descend(&self, head:Index, path:&[T::Children]) -> Index {
     *self.get_trail(head, path).last().unwrap()
   }
 
@@ -163,6 +164,7 @@ struct TreeStorage<N : Node> {
 
 // Add metadata for all sorts of whatever I feel like
 /// Assumes constant leaf count
+#[allow(dead_code)]
 impl<T: GraphNode + Serialize + DeserializeOwned> SparseDirectedGraph<T> {
   pub fn save_object_json(&self, head:Index) -> String {
     let mut object_graph = Self::new(self.leaf_count);
