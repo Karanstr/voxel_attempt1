@@ -50,11 +50,11 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
 
   var ray_origin = data.cam_pos;
   if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { 
-    let t = aabb_intersect(ray_origin, 1.0 / ray_dir, vec3<f32>(data.obj_bounds) );
-    if t >= 0 { ray_origin += ray_dir * t - sign(ray_dir) * FP_BUMP * 2; }
-  }
+    let t = aabb_intersect(data.cam_pos, 1.0 / ray_dir, vec3<f32>(data.obj_bounds) );
+    if t >= 0 { ray_origin = data.cam_pos + ray_dir * t; } else { return vec4<f32>(0.0); }
+  } 
 
-  let hit = dda_vox(ray_origin, ray_dir, data.obj_bounds);
+  let hit = dda_vox(ray_origin, ray_dir, data.obj_bounds, all(ray_origin == data.cam_pos));
   if (hit.hit) {
     let hit_pos = ray_origin + ray_dir * (hit.t + FP_BUMP);
     // let block_size = data.obj_bounds / f32(1 << hit.voxel[1]);
@@ -84,21 +84,22 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   }
 }
 
-// A minimum size dda step moves a distance of 1 unit right now.
-fn dda_vox(ray_origin: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
-  var result = RayHit();
-  result.hit = false;
-
+// ray_origin is currently guaranteed to start within bounds
+fn dda_vox(ray_origin: vec3<f32>, dir: vec3<f32>, bounds: f32, display_inside: bool) -> RayHit {
   let step = vec3<i32>(sign(dir));
-  var cur_voxel = vec3<i32>(floor(ray_origin + FP_BUMP * vec3<f32>(step)));
-  result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
-
   let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
-  let t_step = abs(inv_dir);
   let rounded_pos = select(ceil(ray_origin + FP_BUMP), floor(ray_origin - FP_BUMP), step < vec3<i32>(0));
+
   var t_next = select(rounded_pos - ray_origin, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
-  
+  var cur_voxel = vec3<i32>(floor(ray_origin + FP_BUMP * vec3<f32>(step)));
+  var result = RayHit();
   for (var i = 0u; i < 100u; i++) {
+    result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
+    if (result.voxel[0] != 0u && (!display_inside || result.t != 0.0)) {
+      result.hit = true;
+      return result;
+    }
+
     let block_size = 1 << result.voxel[1];
     let mask = vec3<i32>(block_size - 1);
     let offset = cur_voxel & mask;
@@ -106,25 +107,20 @@ fn dda_vox(ray_origin: vec3<f32>, dir: vec3<f32>, bounds: f32) -> RayHit {
     let sparse_next = t_next + inv_dir * vec3<f32>(additional_blocks);
     result.t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
     result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), sparse_next == vec3<f32>(result.t));
-    
+
     // Sparse skipping
     t_next = select(t_next, sparse_next, sparse_next == vec3<f32>(result.t));
     cur_voxel = select(cur_voxel, cur_voxel + additional_blocks, sparse_next == vec3<f32>(result.t));
-    
+
     // Catchup loop
     loop {
       let t_cur = min(min(t_next.x, t_next.y), t_next.z);
       cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3<f32>(t_cur));
-      t_next = select(t_next, t_next + t_step, t_next == vec3<f32>(t_cur));
+      t_next = select(t_next, t_next + abs(inv_dir), t_next == vec3<f32>(t_cur));
       if (t_cur + FP_BUMP >= result.t) { break; }
     }
 
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(bounds) - 1) != cur_voxel)) { break; }
-    result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
-    if (result.voxel[0] != 0u) {
-      result.hit = true;
-      return result;
-    }
   }
   // No hit found
   return result;
