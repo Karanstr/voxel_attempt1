@@ -47,13 +47,16 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   // Transform + Scale from <0,1> to <-1, 1>, then scale by aspect ratio
   let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
+  let inv_dir = vec3<f32>(sign(ray_dir)) / max(abs(ray_dir), vec3<f32>(FP_BUMP));
 
   var ray_origin = data.cam_pos;
   if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { 
-    let t = aabb_intersect(data.cam_pos, 1.0 / ray_dir, vec3<f32>(data.obj_bounds) );
-    if t > 0 { ray_origin = data.cam_pos + ray_dir * t; } else { return vec4<f32>(0.0); }
+    let t_start = aabb_intersect(data.cam_pos, inv_dir, vec3<f32>(data.obj_bounds) );
+    if t_start == -314159.0 { return vec4<f32>(0.0); } // I need a big sentinel so we avoid 
+    ray_origin += ray_dir * max(0, t_start);
   } 
-  let hit = dda_vox(ray_origin, ray_dir, data.obj_bounds, all(ray_origin == data.cam_pos));
+  let hit = dda_vox(ray_origin, inv_dir, data.obj_bounds);
+
   if (hit.hit) {
     let hit_pos = ray_origin + ray_dir * (hit.t + FP_BUMP);
     // let block_size = data.obj_bounds / f32(1 << hit.voxel[1]);
@@ -63,7 +66,7 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
     let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
     let edge_count = near_edge.x + near_edge.y + near_edge.z;
     // Outline each cube
-    // if (edge_count >= 2) { return vec4<f32>(0.0); }
+    if (edge_count >= 2) { return vec4<f32>(0.0); }
 
     // Base color from normal
     let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
@@ -83,18 +86,20 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   }
 }
 
+
+// Pull inv_dir out here
 // ray_origin is currently guaranteed to start within bounds
-fn dda_vox(ray_origin: vec3<f32>, dir: vec3<f32>, bounds: f32, display_inside: bool) -> RayHit {
-  let step = vec3<i32>(sign(dir));
-  let inv_dir = vec3<f32>(step) / max(abs(dir), vec3<f32>(FP_BUMP));
+fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>, bounds: f32) -> RayHit {
+  let step = vec3<i32>(sign(inv_dir));
   let rounded_pos = select(ceil(ray_origin + FP_BUMP), floor(ray_origin - FP_BUMP), step < vec3<i32>(0));
 
   var t_next = select(rounded_pos - ray_origin, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
   var cur_voxel = vec3<i32>(floor(ray_origin + FP_BUMP * vec3<f32>(step)));
   var result = RayHit();
+
   for (var i = 0u; i < 100u; i++) {
     result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
-    if (result.voxel[0] != 0u && (!display_inside || result.t != 0.0)) {
+    if result.voxel[0] != 0u {
       result.hit = true;
       return result;
     }
@@ -139,18 +144,14 @@ fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
   return vec2<u32>(cur_idx, height);
 }
 
-// I'm not responsible for whatever nonsense chatgpt put in this function. It works, and until I start caring it'll keep working this way.
-fn aabb_intersect(origin: vec3<f32>, inv_dir: vec3<f32>, max_bounds: vec3<f32>) -> f32 {
-  let t1 = (vec3<f32>(0.0) - origin) * inv_dir;
-  let t2 = (max_bounds - origin) * inv_dir;
+fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, max_bounds: vec3<f32>) -> f32 {
+  let t1 = (vec3<f32>(0.0) - ray_origin) * inv_dir;
+  let t2 = (max_bounds - ray_origin) * inv_dir;
 
-  let t_near = max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z));
-  let t_far  = min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z));
+  let t_entry = max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z));
+  let t_exit  = min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z));
+  if t_entry > t_exit || t_exit < 0.0 { return -314159.0; } // Sentinel value
 
-  if t_near > t_far || t_far < 0.0 {
-    return -1.0;
-  }
-
-  return max(t_near, 0.0);
+  return t_entry;
 }
 
