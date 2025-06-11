@@ -1,11 +1,10 @@
 use std::sync::Arc;
-use crate::graph::basic_node3d::BasicNode3d;
-use crate::graph::sdg::{Node, SparseDirectedGraph};
+use crate::graph::prelude::{BasicNode3d, Node, SparseDirectedGraph};
 use winit::window::Window;
 use crate::app::GameData;
 
 // ALWAYS UPDATE CORESPONDING VALUES IN ./render.wgsl and ./compute.wgsl
-const DOWNSCALE: u32 = 1;
+const DOWNSCALE: u32 = 2;
 const WORKGROUP_SQUARE: u32 = 8;
 
 // Remember that vec3's are extended to 16 bytes
@@ -154,7 +153,7 @@ impl<'window> WgpuCtx<'window> {
     let voxel_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Voxel Buffer"),
       // Each BasicNode is 32 Bytes, so we store size / 32 of them
-      size: 1760,
+      size: 93952,
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false
     });
@@ -322,7 +321,6 @@ impl<'window> WgpuCtx<'window> {
     let view = frame.texture.create_view(&Default::default());
     let mut encoder = self.device.create_command_encoder(&Default::default());
 
-    // Probably extract at some point, but I don't care about cloning so few values rn
     let data = Data::new(
       game_data.obj_data.head,
       game_data.obj_data.bounds,

@@ -100,7 +100,7 @@ impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
   }
 
   fn from_cell(cell: UVec3, depth: u32) -> Self {
-    if cell.max_element() > (1 << depth) - 1 { panic!("Cell is too large for depth") }
+    if cell.max_element() > (1 << depth) - 1 { panic!("Cell is too large for depth {depth}") }
     let mut path = Vec::with_capacity(depth as usize);
     let mut x = cell.x;
     let mut y = cell.y;
@@ -130,10 +130,7 @@ impl Node for BasicNode3d {
   type Children = Zorder3d;
 
   fn new(children:&[Index]) -> Self {
-    if children.len() != 8 { panic!("Invalid number of children"); }
-    Self { 
-      children: children.try_into().unwrap()
-    } 
+    Self { children: children.try_into().unwrap() } 
   }
   fn get(&self, child:Self::Children) -> Index {
     self.children[child.to_index()]

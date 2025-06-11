@@ -1,5 +1,5 @@
-use crate::graph::basic_node3d::{BasicNode3d, BasicPath3d};
-use crate::graph::sdg::{Index, SparseDirectedGraph, Path};
+use crate::graph::basic_node3d::Zorder3d;
+use crate::graph::prelude::*;
 use crate::wgpu_ctx::WgpuCtx;
 use crate::camera::Camera;
 use std::sync::Arc;
@@ -20,19 +20,54 @@ pub struct ObjectData {
 impl ObjectData {
   fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
-    let height = 5;
+    let height = 8;
     let size = 2u32.pow(height);
-    for y in 0 .. size {
-      for x in 0 .. size {
-        for z in 0 .. size {
-          if x < size - y && x >= y && z < size - y && z >= y {
-            let path = BasicPath3d::from_cell(UVec3::new(x,y,z), height).steps();
-            head = sdg.set_node(head, &path, 1)
+    {
+      // Floating island base (ellipsoid shape)
+      for x in 40..216 {
+        for y in 80..120 {
+          for z in 40..216 {
+            let dx = x as f32 - 128.0;
+            let dy = y as f32 - 100.0;
+            let dz = z as f32 - 128.0;
+            if (dx*dx)/6400.0 + (dy*dy)/400.0 + (dz*dz)/6400.0 < 1.0 {
+              let path:Vec<Zorder3d> = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+              head = sdg.set_node(head, &path, 1); // 1 = dirt
+            }
+          }
+        }
+      }
+
+      // Grassy surface layer on top of island
+      for x in 60..196 {
+        for z in 60..196 {
+          let mut y = 119;
+          while y >= 80 {
+            let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+            if sdg.descend(head, &path) != 0 {
+              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+              head = sdg.set_node(head, &path, 2); // 2 = grass
+              break;
+            }
+            y -= 1;
+          }
+        }
+      }
+
+      // Crater lake in the middle
+      for x in 108..148 {
+        for z in 108..148 {
+          let dx = x as f32 - 128.0;
+          let dz = z as f32 - 128.0;
+          if dx*dx + dz*dz < 400.0 {
+            for y in 118..121 {
+              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+              head = sdg.set_node(head, &path, 0); // 3 = water
+            }
           }
         }
       }
     }
-    // sdg.nodes.trim();
     ObjectData {
       head,
       bounds: size as f32
@@ -47,8 +82,13 @@ pub struct GameData {
 }
 impl Default for GameData {
   fn default() -> Self {
-    let mut sdg = SparseDirectedGraph::new(2);
+    let mut sdg = SparseDirectedGraph::new();
+    let empty = sdg.add_leaf();
+    let dirt = sdg.add_leaf();
+    let grass = sdg.add_leaf();
+    dbg!(&sdg.leaves);
     let obj_data = ObjectData::new(&mut sdg);
+    println!("Done!");
     Self {
       camera: Camera::default(),
       sdg,
@@ -204,7 +244,7 @@ impl<'window> App<'window> {
       self.mouse_delta = Vec2::ZERO;
     }
     if !self.keys_pressed.is_empty() {
-      let camera_speed = 5.0 * dt;
+      let camera_speed = 15.0 * dt;
       let (right, _, mut forward) = self.game_data.camera.basis().into();
       forward = forward.with_y(0.0).normalize();
       let mut displacement = Vec3::ZERO;

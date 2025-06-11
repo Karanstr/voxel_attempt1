@@ -45,59 +45,55 @@ struct RayHit {
 
 fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   // Transform + Scale from <0,1> to <-1, 1>, then scale by aspect ratio
+  if (1u ^ 1u) == 1u { return vec4(0.0); }
   let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
-  let inv_dir = vec3<f32>(sign(ray_dir)) / max(abs(ray_dir), vec3<f32>(FP_BUMP));
+  let inv_dir = sign(ray_dir) / max(abs(ray_dir), vec3(FP_BUMP));
 
   var ray_origin = data.cam_pos;
-  if (any(clamp(data.cam_pos, vec3<f32>(0.0), vec3<f32>(data.obj_bounds)) != data.cam_pos)) { 
-    let t_start = aabb_intersect(data.cam_pos, inv_dir, vec3<f32>(data.obj_bounds) );
-    if t_start == -314159.0 { return vec4<f32>(0.0); } // I need a big sentinel so we avoid 
+  if (any(clamp(data.cam_pos, vec3(0.0), vec3(data.obj_bounds)) != data.cam_pos)) { 
+    let t_start = aabb_intersect(data.cam_pos, inv_dir, vec3(data.obj_bounds) );
+    if t_start == -314159.0 { return vec4(0.0); } // I need a big sentinel so we avoid 
     ray_origin += ray_dir * max(0, t_start);
   } 
   let hit = dda_vox(ray_origin, inv_dir, data.obj_bounds);
 
   if (hit.hit) {
-    let hit_pos = ray_origin + ray_dir * (hit.t + FP_BUMP);
-    // let block_size = data.obj_bounds / f32(1 << hit.voxel[1]);
-    let block_size = f32(1 << hit.voxel[1]);
-    let percent_of_block = fract(hit_pos / block_size);
-
-    let near_edge = vec3<i32>((percent_of_block < vec3<f32>(0.01)) | (percent_of_block > vec3<f32>(1.0 - 0.01 / block_size)));
-    let edge_count = near_edge.x + near_edge.y + near_edge.z;
-    // Outline each cube
-    if (edge_count >= 2) { return vec4<f32>(0.0); }
-
-    // Base color from normal
-    let per_color = mix(vec3(0.0), vec3(1.0), percent_of_block);
-    
-    // Vary color based on normal to help distinguish faces
-    let normal_influence = abs(hit.normal) * 0.3;
-    let voxel_id_color = vec3<f32>(
-      0.8 - normal_influence.z * 0.2, 
-      0.5 + normal_influence.x * 0.2, 
-      0.4 + normal_influence.y * 0.3
+    var per_color = vec3(0.0);
+    if (hit.voxel[0] == 1) {
+      per_color = make_color(115, 20, 146);
+    } else {
+      per_color = make_color(20, 100, 20);
+    };
+  
+    let normal_influence = abs(hit.normal);
+    let normals = vec3(
+      1.0 - normal_influence.z * 0.2, // darker on Z
+      1.0 + normal_influence.x * 0.3, // brighter on X
+      1.0 + normal_influence.y * 0.4  // brighter on Y
     );
-    let color = mix(voxel_id_color, per_color, vec3(0.5));
-    return vec4<f32>(color, 1.0);
+
+    let final_color = per_color * normals;
+
+    return vec4(final_color, 1.0);
   } else {
     // This is where we would handle a skybox
-    return vec4<f32>(0.0);
+    return vec4(0.0);
   }
 }
 
+fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0); }
 
-// Pull inv_dir out here
 // ray_origin is currently guaranteed to start within bounds
 fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>, bounds: f32) -> RayHit {
   let step = vec3<i32>(sign(inv_dir));
   let rounded_pos = select(ceil(ray_origin + FP_BUMP), floor(ray_origin - FP_BUMP), step < vec3<i32>(0));
-
-  var t_next = select(rounded_pos - ray_origin, vec3<f32>(10000000.0), step == vec3<i32>(0)) * inv_dir;
+  
+  var t_next = select(rounded_pos - ray_origin, vec3(10000000.0), step == vec3(0)) * inv_dir;
   var cur_voxel = vec3<i32>(floor(ray_origin + FP_BUMP * vec3<f32>(step)));
   var result = RayHit();
 
-  for (var i = 0u; i < 100u; i++) {
+  for (var i = 0u; i < 300u; i++) {
     result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
     if result.voxel[0] != 0u {
       result.hit = true;
@@ -110,17 +106,17 @@ fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>, bounds: f32) -> RayHit {
     let additional_blocks = vec3<i32>(select(-offset, mask - offset, vec3<i32>(0) < step));
     let sparse_next = t_next + inv_dir * vec3<f32>(additional_blocks);
     result.t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
-    result.normal = select(vec3<f32>(0.0), vec3<f32>(1.0), sparse_next == vec3<f32>(result.t));
+    result.normal = select(vec3(0.0), vec3(1.0), sparse_next == vec3<f32>(result.t));
 
     // Sparse skipping
-    t_next = select(t_next, sparse_next, sparse_next == vec3<f32>(result.t));
-    cur_voxel = select(cur_voxel, cur_voxel + additional_blocks, sparse_next == vec3<f32>(result.t));
+    t_next = select(t_next, sparse_next, sparse_next == vec3(result.t));
+    cur_voxel = select(cur_voxel, cur_voxel + additional_blocks, sparse_next == vec3(result.t));
 
     // Catchup loop
     loop {
       let t_cur = min(min(t_next.x, t_next.y), t_next.z);
-      cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3<f32>(t_cur));
-      t_next = select(t_next, t_next + abs(inv_dir), t_next == vec3<f32>(t_cur));
+      cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3(t_cur));
+      t_next = select(t_next, t_next + abs(inv_dir), t_next == vec3(t_cur));
       if (t_cur + FP_BUMP >= result.t) { break; }
     }
 
@@ -133,7 +129,7 @@ fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>, bounds: f32) -> RayHit {
 /// Trusts that you submit a cell which fits within the root
 fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
   var cur_idx = head;
-  var height = 5u;
+  var height = 8u;
   while height != 0 {
     let child = cell >> vec3<u32>(height - 1) & vec3<u32>(1);
     let next_idx = voxels[cur_idx].children[child.z << 2 | child.y << 1 | child.x];
@@ -145,7 +141,7 @@ fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
 }
 
 fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, max_bounds: vec3<f32>) -> f32 {
-  let t1 = (vec3<f32>(0.0) - ray_origin) * inv_dir;
+  let t1 = (vec3(0.0) - ray_origin) * inv_dir;
   let t2 = (max_bounds - ray_origin) * inv_dir;
 
   let t_entry = max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z));
