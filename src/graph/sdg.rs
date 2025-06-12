@@ -216,8 +216,9 @@ pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<
   while let Some(index) = queue.pop_front() {
     bfs_indexes.push(index);
     if leaves.binary_search(&index).is_err() {
+      let parent = &nodes[index as usize];
       for child in N::Children::all() {
-        queue.push_back(nodes[index as usize].get(child))
+        queue.push_back(parent.get(child))
       }
     }
   }
