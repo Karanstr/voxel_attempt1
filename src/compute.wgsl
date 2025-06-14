@@ -27,26 +27,23 @@ var<storage> voxels: array<VoxelNode>;
 
 @compute @workgroup_size(WG_SIZE, WG_SIZE)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  // We do a little padding so we can fit our pixels into the workgroups
-  // This prevents any unwanted computation on the edges
   let resolution = vec2<u32>(textureDimensions(output_tex));
+  // We do a little padding so we can fit our pixels into the workgroups
   if (gid.x >= resolution.x || gid.y >= resolution.y) { return; }
-  let color = march_init(gid, resolution);
-  textureStore(output_tex, vec2<i32>(gid.xy), color);
+  // Transform from <0,1> to <-1, 1>, then scale by aspect ratio
+  let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
+  textureStore(output_tex, vec2<i32>(gid.xy), march_init(uv));
 }
 
 // Ray hit information
 struct RayHit {
-  hit: bool,
-  normal: vec3<f32>,
+  axis: vec3<bool>,
   t: f32,
   voxel: vec2<u32>,
 }
 
-// Cam_pos is normalized to 0.0 - 1.0 being within the region
-fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
-  // Transform + Scale from <0,1> to <-1, 1>, then scale by aspect ratio
-  let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
+// Cam_pos is normalized to 0.0 - 1.0 being within the region NOT TRUE YET
+fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
   let inv_dir = sign(ray_dir) / max(abs(ray_dir), vec3(FP_BUMP));
 
@@ -59,32 +56,22 @@ fn march_init(gid: vec3<u32>, resolution: vec2<u32>) -> vec4<f32> {
   } 
   let hit = dda_vox(ray_origin, inv_dir);
 
-  // Move into frag shader
-  if (hit.hit) {
-    var per_color = vec3(0.0);
-    if (hit.voxel[0] == 1) {
-      per_color = make_color(115, 20, 146);
-    } else {
-      per_color = make_color(20, 100, 20);
-    };
-  
-    let normal_influence = abs(hit.normal);
-    let normals = vec3(
-      1.0 - normal_influence.z * 0.2,  // darker on Z
-      1.0 + normal_influence.x * 0.3,  // brighter on X
-      1.0 + normal_influence.y * 0.4,  // brighter on Y
-    );
-
-    let final_color = per_color * normals;
-
-    return vec4(final_color, 1.0);
-  } else {
-    // This is where we would handle a skybox
-    return vec4(0.0);
+  var base_color: vec3<f32>;
+  switch hit.voxel[0] {
+    case 0: { base_color = vec3(0.0); }
+    case 1: { base_color = make_color(115, 20, 146); }
+    case 2: { base_color = make_color(20, 100, 20); }
+    default: { base_color = vec3(1.0); } // Unknown block
   }
+  let normal_color = vec3(
+    1.0 - f32(hit.axis.z) * 0.2,
+    1.0 + f32(hit.axis.x) * 0.3,
+    1.0 + f32(hit.axis.y) * 0.4,
+  );
+  return vec4(base_color * normal_color, 0);
 }
 
-fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0); }
+fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r), f32(g), f32(b)) / 255.0; }
 
 // The 7th bit represents half the voxel volume.
 const HALF_BIT:u32 = 1 << 7;
@@ -107,17 +94,14 @@ fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   var result = RayHit();
   for (var i = 0u; i < 300u; i++) {
     result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
-    if result.voxel[0] != 0u {
-      result.hit = true;
-      return result;
-    }
+    if result.voxel[0] != 0u { break; }
 
     let mask = vec3<i32>((1 << result.voxel[1]) - 1);
     let offset = cur_voxel & mask;
     let additional_blocks = vec3<i32>(select(-offset, mask - offset, vec3<i32>(0) < step));
     let sparse_next = t_next + inv_dir * vec3<f32>(additional_blocks);
     result.t = min(min(sparse_next.x, sparse_next.y), sparse_next.z);
-    result.normal = select(vec3(0.0), vec3(1.0), sparse_next == vec3<f32>(result.t));
+    result.axis = sparse_next == vec3<f32>(result.t);
 
     // Sparse skipping
     t_next = select(t_next, sparse_next, sparse_next == vec3(result.t));
@@ -132,7 +116,6 @@ fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
     }
     if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(ENTIRE_BIT - 1)) != cur_voxel)) { break; }
   }
-  // No hit found
   return result;
 }
 
