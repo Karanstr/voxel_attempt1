@@ -55,7 +55,6 @@ pub struct SparseDirectedGraph<T: GraphNode> {
   pub leaves: Vec<Index>,
 }
 impl<T: GraphNode> SparseDirectedGraph<T> {
-  // Utility
   pub fn new() -> Self {
     Self {
       nodes : NodeField::new(),
@@ -70,12 +69,10 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     let mut trail = Vec::with_capacity(path.len() + 1);
     trail.push(head);
     for step in 0 .. path.len() {
-      trail.push( self.child(trail[step], path[step]).unwrap() );
+      trail.push( self.child(trail[step], path[step]) );
     }
     trail 
   }
-
-  fn is_leaf(&self, index:Index) -> bool { self.leaves.binary_search(&index).is_ok() }
 
   pub fn add_leaf(&mut self) -> Index {
     let new_leaf = self.nodes.push(T::new(&vec![0; T::Children::COUNT])) as Index;
@@ -90,11 +87,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     new_leaf
   }
 
-  // remove_leaf?
-
-  // Private functions used for writing
-  fn find_index(&self, node:&T) -> Option<Index> { self.index_lookup.get(node).copied() }
-
+  
   fn add_node(&mut self, node:T) -> Index {
     let index = self.nodes.push(node.clone()) as Index;
     self.index_lookup.insert(node, index);
@@ -105,7 +98,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
   fn propagate_change(&mut self, path: &[T::Children], trail: &[Index], mut new_child: Index,) -> (Index, Index, Option<T>) {
     for cur_depth in (0 .. path.len()).rev() {
       let cur_idx = trail[cur_depth];
-      let new_node = self.node(cur_idx).unwrap().with_child(path[cur_depth], new_child);
+      let new_node = self.node(cur_idx).with_child(path[cur_depth], new_child);
       new_child = if let Some(idx) = self.find_index(&new_node) { 
         idx 
       } else if self.nodes.status(cur_idx as usize).unwrap() == 2 && !self.is_leaf(cur_idx) {
@@ -118,6 +111,12 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
   }
 
   // Public functions used for writing
+  //
+  // If we make a new root at the start of the trail, we don't need to perform any decrementing, only incrementing (as we're not replacing anything).
+  // If we replace an existing node, we only need to decrement/increment nodes along the trail to
+  // the replaced node and their children, the rest of the branches remain unchanged.
+  // 
+  // Right now we increment an entire tree from the last modified node head then decrement an entire tree from the old node
   pub fn set_node(&mut self, head:Index, path:&[T::Children], new_idx:Index) -> Index {
     let trail = self.get_trail(head, path);
     if *trail.last().unwrap() == new_idx { return head }
@@ -129,35 +128,30 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
       self.index_lookup.insert(new_node, head_added);
       head
     } else { head_added };
-    for index in bfs_nodes(self.nodes.data(), head_added, &self.leaves) {
-      self.nodes.add_ref(index as usize).unwrap()
+    for idx in bfs_nodes(self.nodes.data(), head_added, &self.leaves) {
+      self.nodes.add_ref(idx as usize).unwrap()
     }
-    for index in &culled_nodes {
-      self.nodes.remove_ref(*index as usize).unwrap();
-      if self.nodes.status(*index as usize).unwrap() == 1 && !self.is_leaf(*index) {
-        self.index_lookup.remove(&self.nodes.remove_ref(*index as usize).unwrap().unwrap());
+    for idx in &culled_nodes {
+      self.nodes.remove_ref(*idx as usize).unwrap();
+      if self.nodes.status(*idx as usize).unwrap() == 1 && !self.is_leaf(*idx) {
+        self.index_lookup.remove(&self.nodes.remove_ref(*idx as usize).unwrap().unwrap());
       }
     }
     edit_head
   }
+  
+  fn find_index(&self, node:&T) -> Option<Index> { self.index_lookup.get(node).copied() }
+  
+  fn is_leaf(&self, idx:Index) -> bool { self.leaves.binary_search(&idx).is_ok() }
 
-  // Public functions used for reading
-  pub fn node(&self, idx:Index) -> Result<&T, AccessError> {
-    self.nodes.get(idx as usize)
-  }
+  // This can only fail if there's an internal failure
+  fn node(&self, idx:Index) -> &T { self.nodes.get(idx as usize).expect(format!("Internal Failure, couldn't retrieve node at {idx}").as_str() ) }
 
-  pub fn child(&self, idx:Index, child:T::Children) -> Result<Index, AccessError> {
-    Ok( self.node(idx)?.get(child) )
-  }
+  fn child(&self, idx:Index, child:T::Children) -> Index { self.node(idx).get(child) }
 
-  pub fn descend(&self, head:Index, path:&[T::Children]) -> Index {
-    *self.get_trail(head, path).last().unwrap()
-  }
+  pub fn descend(&self, head:Index, path:&[T::Children]) -> Index { *self.get_trail(head, path).last().unwrap() }
 
-  pub fn get_root(&mut self, index:Index) -> Index {
-    self.nodes.add_ref(index as usize).unwrap();
-    index
-  }
+  pub fn get_root(&mut self, idx:Index) -> Index { self.nodes.add_ref(idx as usize).expect(format!("Index {idx} doesn't exist within tree").as_str() ); idx }
 
 }
 
