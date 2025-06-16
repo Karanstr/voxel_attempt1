@@ -23,7 +23,6 @@ pub trait Childs: std::fmt::Debug + Clone + Copy {
 // Nodes are anything with valid children access
 pub trait Node : Clone + std::fmt::Debug {
   type Children : Childs;
-
   fn new(children:&[Index]) -> Self;
   fn get(&self, child: Self::Children) -> Index;
   fn set(&mut self, child: Self::Children, index:Index);
@@ -36,12 +35,8 @@ impl<T> Node for Option<T> where T: Node {
   type Children = T::Children;
   // This feels like a bad approach, but idk what the better one would be
   fn new(_:&[Index]) -> Self { panic!("Don't do that!") }
-  fn get(&self, child:Self::Children) -> Index {
-    self.as_ref().unwrap().get(child)
-  }
-  fn set(&mut self, child:Self::Children, index:Index) {
-    self.as_mut().unwrap().set(child, index)
-  }
+  fn get(&self, child:Self::Children) -> Index { self.as_ref().unwrap().get(child) }
+  fn set(&mut self, child:Self::Children, index:Index) { self.as_mut().unwrap().set(child, index) }
   fn with_child(&self, child: Self::Children, index:Index) -> Self {
     let mut new = self.clone().unwrap();
     new.set(child, index);
@@ -63,35 +58,28 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     }
   }
 
+  pub fn add_leaf(&mut self) -> Index {
+    let new_leaf = self.nodes.push(T::new(&vec![0; T::Children::COUNT])) as Index;
+    self.nodes.replace(new_leaf as usize, T::new(&vec![new_leaf; T::Children::COUNT][..])).unwrap();
+    self.leaves.insert(self.leaves.iter().position(|leaf| new_leaf < *leaf ).unwrap_or(self.leaves.len()), new_leaf);
+    new_leaf
+  }
+
+  // I'm really tired, but why can't I just add a reference to all children of a node I add instead
+  // of descending the entire tree.
+  fn add_node(&mut self, node:T) -> Index {
+    let index = self.nodes.push(node.clone()) as Index;
+    self.index_lookup.insert(node, index);
+    index
+  }
+
   /// Returns a trail with length path.len() + 1.
   /// trail.first() is the head of the trail and trail.last() is the node the path leads to.
   fn get_trail(&self, head:Index, path:&[T::Children]) -> Vec<Index>  {
     let mut trail = Vec::with_capacity(path.len() + 1);
     trail.push(head);
-    for step in 0 .. path.len() {
-      trail.push( self.child(trail[step], path[step]) );
-    }
+    for step in 0 .. path.len() { trail.push(self.child(trail[step], path[step])) }
     trail 
-  }
-
-  pub fn add_leaf(&mut self) -> Index {
-    let new_leaf = self.nodes.push(T::new(&vec![0; T::Children::COUNT])) as Index;
-    self.nodes.replace(new_leaf as usize, T::new(&vec![new_leaf; T::Children::COUNT][..])).unwrap();
-    for i in 0 .. self.leaves.len() {
-      if new_leaf < self.leaves[i] {
-        self.leaves.insert(i, new_leaf);
-        return new_leaf
-      }
-    }
-    self.leaves.push(new_leaf);
-    new_leaf
-  }
-
-  
-  fn add_node(&mut self, node:T) -> Index {
-    let index = self.nodes.push(node.clone()) as Index;
-    self.index_lookup.insert(node, index);
-    index
   }
 
   /// Returns (Head of deleted tree, Head of new tree, Option<If any node along trail has only one reference, the node we should replace that node with>)
@@ -110,8 +98,6 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     (trail[0], new_child, None)
   }
 
-  // Public functions used for writing
-  //
   // If we make a new root at the start of the trail, we don't need to perform any decrementing, only incrementing (as we're not replacing anything).
   // If we replace an existing node, we only need to decrement/increment nodes along the trail to
   // the replaced node and their children, the rest of the branches remain unchanged.
@@ -144,14 +130,13 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
   
   fn is_leaf(&self, idx:Index) -> bool { self.leaves.binary_search(&idx).is_ok() }
 
-  // This can only fail if there's an internal failure
-  fn node(&self, idx:Index) -> &T { self.nodes.get(idx as usize).expect(format!("Internal Failure, couldn't retrieve node at {idx}").as_str() ) }
+  fn node(&self, idx:Index) -> &T { self.nodes.get(idx as usize).unwrap() }
 
   fn child(&self, idx:Index, child:T::Children) -> Index { self.node(idx).get(child) }
 
   pub fn descend(&self, head:Index, path:&[T::Children]) -> Index { *self.get_trail(head, path).last().unwrap() }
 
-  pub fn get_root(&mut self, idx:Index) -> Index { self.nodes.add_ref(idx as usize).expect(format!("Index {idx} doesn't exist within tree").as_str() ); idx }
+  pub fn get_root(&mut self, idx:Index) -> Index { self.nodes.add_ref(idx as usize).unwrap(); idx }
 
 }
 
