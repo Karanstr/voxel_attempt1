@@ -18,23 +18,26 @@ pub struct ObjectData {
   pub bounds: f32,
 }
 impl ObjectData {
-  fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
+  pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
     let height = 8;
     let size = 2u32.pow(height);
     {
+      // let mut count = 0;
       // Floating island base (ellipsoid shape)
       // Why so slow??
       for x in 40..216 {
         for y in 80..120 {
           for z in 40..216 {
+            // count += 1;
             let dx = x as i32 - 128;
             let dy = y as i32 - 100;
             let dz = z as i32 - 128;
             if (dx*dx) + (dy*dy)*16 + (dz*dz) < 6400 {
-              let path:Vec<Zorder3d> = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+              let path:Vec<Zorder3d> = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
               head = sdg.set_node(head, &path, 1); // 1 = dirt
             }
+            // dbg!(count);
           }
         }
       }
@@ -43,9 +46,9 @@ impl ObjectData {
       for x in 60..196 {
         for z in 60..196 {
           for y in (80 .. 120).rev() {
-            let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+            let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
             if sdg.descend(head, &path) != 0 {
-              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
               head = sdg.set_node(head, &path, 2); // 2 = grass
               break;
             }
@@ -60,7 +63,7 @@ impl ObjectData {
           let dz = z as i32 - 128;
           if dx*dx + dz*dz < 400 {
             for y in 118..121 {
-              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
+              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
               head = sdg.set_node(head, &path, 0); // 3 = water
             }
           }
@@ -82,12 +85,10 @@ pub struct GameData {
 impl Default for GameData {
   fn default() -> Self {
     let mut sdg = SparseDirectedGraph::new();
-    let empty = sdg.add_leaf();
-    let dirt = sdg.add_leaf();
-    let grass = sdg.add_leaf();
-    dbg!(&sdg.leaves);
+    let _empty = sdg.add_leaf();
+    let _dirt = sdg.add_leaf();
+    let _grass = sdg.add_leaf();
     let obj_data = ObjectData::new(&mut sdg);
-    println!("Done!");
     Self {
       camera: Camera::default(),
       sdg,

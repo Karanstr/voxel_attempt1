@@ -1,10 +1,8 @@
-use serde::{Deserialize, Serialize};
 use super::sdg::{
   Node, GraphNode,
-  Childs, Path
+  Childs, Path, Index
 };
 use glam::UVec3;
-type Index = u32;
 
 // Front-Back Z
 // Top-Bottom Y
@@ -75,23 +73,17 @@ impl Childs for Zorder3d {
   }
 }
 
-
-pub struct BasicPath3d<Zorder3d>(Vec<Zorder3d>);
-impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
-  fn new() -> Self { Self(Vec::new()) }
-
-  fn step_down(&self, child:Zorder3d) -> Self {
-    let mut new = self.0.clone();
-    new.push(child);
-    Self(new)
-  }
+// This needs revamping
+pub type BasicPath3d = Vec<Zorder3d>;
+impl<Zorder3d : Childs> Path<Zorder3d> for Vec<Zorder3d> {
+  fn new() -> Self { Vec::new() }
 
   fn to_cell(&self) -> UVec3 {
     let mut x = 0;
     let mut y = 0;
     let mut z = 0;
     for layer in 0 .. self.depth() {
-      let coord = self.steps()[layer as usize].to_coord();
+      let coord = self.step(layer as usize).to_coord();
       x |= (coord.x as u32) << layer;
       y |= (coord.y as u32) << layer;
       z |= (coord.z as u32) << layer;
@@ -110,38 +102,25 @@ impl<Zorder3d : Childs> Path<Zorder3d> for BasicPath3d<Zorder3d> {
       x >>= 1; y >>= 1; z >>= 1;
     }
     path.reverse();
-    Self(path)
+    path
   }
 
-  fn steps(&self) -> Vec<Zorder3d> { self.0.clone() }
-  fn depth(&self) -> u32 { self.0.len() as u32 }
+  fn step(&self, idx:usize ) -> Zorder3d { self[idx] }
+  fn depth(&self) -> u32 { self.len() as u32 }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, 
-  Serialize, Deserialize, 
-  bytemuck::Pod, bytemuck::Zeroable
-)]
-pub struct BasicNode3d {
-  children: [Index; 8]
-}
-
+pub type BasicNode3d = [Index; 8];
 impl Node for BasicNode3d {
   type Children = Zorder3d;
-
-  fn new(children:&[Index]) -> Self {
-    Self { children: children.try_into().unwrap() } 
-  }
-  fn get(&self, child:Self::Children) -> Index {
-    self.children[child.to_index()]
-  }
-  fn set(&mut self, child:Self::Children, index:Index) {
-    self.children[child.to_index()] = index
-  }
+  type Naive = Self;
+  fn new(children:&[u32]) -> Self { children.try_into().unwrap() }
+  fn naive(&self) -> Self::Naive { *self }
+  fn get(&self, child:Self::Children) -> Index { self[child.to_index()] }
+  fn set(&mut self, child:Self::Children, index:Index) { self[child.to_index()] = index }
   fn with_child(&self, child: Self::Children, index:Index) -> Self {
-      let mut new = self.clone();
-      new.set(child, index);
-      new
+    let mut new = *self;
+    new.set(child, index);
+    new
   }
 }
 impl GraphNode for BasicNode3d {}
