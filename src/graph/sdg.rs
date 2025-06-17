@@ -21,6 +21,8 @@ pub trait Childs: std::fmt::Debug + Clone + Copy {
 }
 
 // Nodes are anything with valid children access
+// Consider writing a raw_pointers method or somthing so we can access all children without
+// iterating? Would return a slice bc we don't know how compression would work.
 pub trait Node : Clone + std::fmt::Debug {
   type Children : Childs;
   fn new(children:&[Index]) -> Self;
@@ -58,23 +60,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     }
   }
 
-  pub fn add_leaf(&mut self) -> Index {
-    let new_leaf = self.nodes.push(T::new(&vec![0; T::Children::COUNT])) as Index;
-    self.nodes.replace(new_leaf as usize, T::new(&vec![new_leaf; T::Children::COUNT][..])).unwrap();
-    self.leaves.insert(self.leaves.iter().position(|leaf| new_leaf < *leaf ).unwrap_or(self.leaves.len()), new_leaf);
-    new_leaf
-  }
-
-  // I'm really tired, but why can't I just add a reference to all children of a node I add instead
-  // of descending the entire tree.
-  fn add_node(&mut self, node:T) -> Index {
-    let index = self.nodes.push(node.clone()) as Index;
-    self.index_lookup.insert(node, index);
-    index
-  }
-
-  /// Returns a trail with length path.len() + 1.
-  /// trail.first() is the head of the trail and trail.last() is the node the path leads to.
+  /// Returns a trail with length path.len() + 1. trail.first() is the head of the trail and trail.last() is the node the path leads to.
   fn get_trail(&self, head:Index, path:&[T::Children]) -> Vec<Index>  {
     let mut trail = Vec::with_capacity(path.len() + 1);
     trail.push(head);
@@ -82,48 +68,64 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     trail 
   }
 
-  /// Returns (Head of deleted tree, Head of new tree, Option<If any node along trail has only one reference, the node we should replace that node with>)
-  fn propagate_change(&mut self, path: &[T::Children], trail: &[Index], mut new_child: Index,) -> (Index, Index, Option<T>) {
-    for cur_depth in (0 .. path.len()).rev() {
-      let cur_idx = trail[cur_depth];
-      let new_node = self.node(cur_idx).with_child(path[cur_depth], new_child);
-      new_child = if let Some(idx) = self.find_index(&new_node) { 
-        idx 
-      } else if self.nodes.status(cur_idx as usize).unwrap() == 2 && !self.is_leaf(cur_idx) {
-        return (cur_idx, cur_idx, Some(new_node))
-      } else {
-        self.add_node(new_node)
-      };
-    };
-    (trail[0], new_child, None)
+  pub fn add_leaf(&mut self) -> Index {
+    let idx = self.nodes.push(T::new(&vec![0; T::Children::COUNT])) as Index;
+    let leaf = T::new(&vec![idx; T::Children::COUNT][..]);
+    self.nodes.replace(idx as usize, leaf.clone()).unwrap();
+    self.leaves.insert(self.leaves.iter().position(|leaf| idx < *leaf ).unwrap_or(self.leaves.len()), idx);
+    self.index_lookup.insert(leaf, idx);
+    idx
   }
 
-  // If we make a new root at the start of the trail, we don't need to perform any decrementing, only incrementing (as we're not replacing anything).
-  // If we replace an existing node, we only need to decrement/increment nodes along the trail to
-  // the replaced node and their children, the rest of the branches remain unchanged.
-  // 
-  // Right now we increment an entire tree from the last modified node head then decrement an entire tree from the old node
+  pub fn remove_leaf(&mut self, leaf:Index) {
+    let leaf_list_idx = self.leaves.binary_search(&leaf).expect(format!("Leaf {leaf} isn't a leaf!!").as_str());
+    if self.nodes.status(leaf as usize).unwrap() != 1 { panic!("The graph still needs leaf {leaf}") } else {
+      let leaf_node = self.nodes.remove_ref(leaf as usize).unwrap().unwrap();
+      self.index_lookup.remove(&leaf_node);
+      self.leaves.remove(leaf_list_idx);
+    }
+  }
+
+  fn add_node(&mut self, node:T) -> Index {
+    let index = self.nodes.push(node.clone()) as Index;
+    self.index_lookup.insert(node.clone(), index);
+    // This node keeps all immediate children alive + 1
+    for child in T::Children::all() { self.nodes.add_ref(node.get(child) as usize).unwrap(); }
+    index
+  }
+
+  fn propagate_change(&mut self, path: &[T::Children], trail: &[Index], mut new_child: Index,) -> Index {
+    for cur_depth in (0 .. path.len()).rev() {
+      let new_node = self.node(trail[cur_depth]).with_child(path[cur_depth], new_child);
+      new_child = if let Some(idx) = self.find_index(&new_node) { idx } else { self.add_node(new_node) };
+    };
+    new_child
+  }
+
   pub fn set_node(&mut self, head:Index, path:&[T::Children], new_idx:Index) -> Index {
     let trail = self.get_trail(head, path);
     if *trail.last().unwrap() == new_idx { return head }
-    let (head_removed, head_added, replace) = self.propagate_change(path, &trail, new_idx);
-    let culled_nodes = bfs_nodes(self.nodes.data(), head_removed, &self.leaves); 
-    let edit_head = if let Some(new_node) = replace {
-      let old_node = self.nodes.replace(head_removed as usize, new_node.clone()).unwrap();
-      self.index_lookup.remove(&old_node);
-      self.index_lookup.insert(new_node, head_added);
-      head
-    } else { head_added };
-    for idx in bfs_nodes(self.nodes.data(), head_added, &self.leaves) {
-      self.nodes.add_ref(idx as usize).unwrap()
-    }
-    for idx in &culled_nodes {
-      self.nodes.remove_ref(*idx as usize).unwrap();
-      if self.nodes.status(*idx as usize).unwrap() == 1 && !self.is_leaf(*idx) {
-        self.index_lookup.remove(&self.nodes.remove_ref(*idx as usize).unwrap().unwrap());
+    let new_head = self.propagate_change(path, &trail, new_idx);
+    self.nodes.add_ref(new_head as usize).unwrap();
+    self.decrement_ref(head);
+    new_head
+  }
+
+  fn decrement_ref(&mut self, idx:Index) {
+    if self.nodes.status(idx as usize).unwrap() <= 2 && self.is_leaf(idx) { panic!("Decrement would remove index {idx}, a leaf. Please remove_leaf instead") } 
+    let mut queue = VecDeque::from([idx as usize]);
+    while let Some(cur_idx) = queue.pop_front() {
+      self.nodes.remove_ref(cur_idx).unwrap();
+      if self.nodes.status(cur_idx).unwrap() == 1 {
+        let old_node = self.nodes.remove_ref(cur_idx).unwrap().unwrap();
+        self.index_lookup.remove(&old_node);
+        for child in T::Children::all() {
+          let child_idx = old_node.get(child);
+          if self.is_leaf(child_idx) { continue }
+          queue.push_back(child_idx as usize)
+        }
       }
     }
-    edit_head
   }
   
   fn find_index(&self, node:&T) -> Option<Index> { self.index_lookup.get(node).copied() }
@@ -204,6 +206,8 @@ pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<
   bfs_indexes
 }
 
+// Note to self, write some more tests!!
+//
 // Yap yap I know this should be a library. I'll do that once it's less everchanging.
 #[test]
 fn merge_check() {
