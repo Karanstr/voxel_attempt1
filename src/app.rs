@@ -24,13 +24,14 @@ impl ObjectData {
     let size = 2u32.pow(height);
     {
       // Floating island base (ellipsoid shape)
+      // Why so slow??
       for x in 40..216 {
         for y in 80..120 {
           for z in 40..216 {
-            let dx = x as f32 - 128.0;
-            let dy = y as f32 - 100.0;
-            let dz = z as f32 - 128.0;
-            if (dx*dx)/6400.0 + (dy*dy)/400.0 + (dz*dz)/6400.0 < 1.0 {
+            let dx = x as i32 - 128;
+            let dy = y as i32 - 100;
+            let dz = z as i32 - 128;
+            if (dx*dx) + (dy*dy)*16 + (dz*dz) < 6400 {
               let path:Vec<Zorder3d> = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
               head = sdg.set_node(head, &path, 1); // 1 = dirt
             }
@@ -41,15 +42,13 @@ impl ObjectData {
       // Grassy surface layer on top of island
       for x in 60..196 {
         for z in 60..196 {
-          let mut y = 119;
-          while y >= 80 {
+          for y in (80 .. 120).rev() {
             let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
             if sdg.descend(head, &path) != 0 {
               let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
               head = sdg.set_node(head, &path, 2); // 2 = grass
               break;
             }
-            y -= 1;
           }
         }
       }
@@ -57,9 +56,9 @@ impl ObjectData {
       // Crater lake in the middle
       for x in 108..148 {
         for z in 108..148 {
-          let dx = x as f32 - 128.0;
-          let dz = z as f32 - 128.0;
-          if dx*dx + dz*dz < 400.0 {
+          let dx = x as i32 - 128;
+          let dz = z as i32 - 128;
+          if dx*dx + dz*dz < 400 {
             for y in 118..121 {
               let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8).steps();
               head = sdg.set_node(head, &path, 0); // 3 = water
