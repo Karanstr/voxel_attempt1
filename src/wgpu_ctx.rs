@@ -309,9 +309,7 @@ impl<'window> WgpuCtx<'window> {
   }
 
   pub fn update_voxels(&self, sdg:&SparseDirectedGraph<BasicNode3d>) {
-    let voxels = sdg.nodes.data().iter().map(|x|
-      x.clone().unwrap_or(BasicNode3d::new(&[u32::MAX; 8]))
-    ).collect::<Vec<_>>();
+    let voxels = sdg.nodes.data().clone();
     self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
   }
   

@@ -21,7 +21,7 @@ pub trait Childs: std::fmt::Debug + Clone + Copy {
 }
 
 // Nodes are anything with valid children access
-pub trait Node : Clone + Copy + std::fmt::Debug {
+pub trait Node : Clone + Copy + std::fmt::Debug + Nullable {
   type Children : Childs;
   type Naive : Eq + std::hash::Hash + Copy;
   fn new(children:&[u32]) -> Self;
@@ -32,22 +32,6 @@ pub trait Node : Clone + Copy + std::fmt::Debug {
 }
 // GraphNodes are nodes which can be hashed and copied, making them valid for SDG storage
 pub trait GraphNode : Node + std::hash::Hash + Eq {}
-
-// This is silly, we'll take care of that
-impl<T> Node for Option<T> where T: Node {
-  type Children = T::Children;
-  type Naive = T::Naive;
-  // This feels like a bad approach, I know what a better one is.
-  fn new(_:&[Index]) -> Self { panic!("Don't do that!") }
-  fn get(&self, child:Self::Children) -> Index { self.as_ref().unwrap().get(child) }
-  fn set(&mut self, child:Self::Children, index:Index) { self.as_mut().unwrap().set(child, index) }
-  fn naive(&self) -> Self::Naive { self.as_ref().unwrap().naive() }
-  fn with_child(&self, child: Self::Children, index:Index) -> Self {
-    let mut new = self.clone().unwrap();
-    new.set(child, index);
-    Some(new)
-  }
-}
 
 pub struct SparseDirectedGraph<T: GraphNode> {
   pub nodes : NodeField<T>,

@@ -3,6 +3,7 @@ use super::sdg::{
   Childs, Path, Index
 };
 use glam::UVec3;
+use vec_mem_heap::Nullable;
 
 // Front-Back Z
 // Top-Bottom Y
@@ -109,14 +110,19 @@ impl<Zorder3d : Childs> Path<Zorder3d> for Vec<Zorder3d> {
   fn depth(&self) -> u32 { self.len() as u32 }
 }
 
-pub type BasicNode3d = [Index; 8];
+#[repr(C)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, std::hash::Hash, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BasicNode3d([Index; 8]);
+impl Nullable for BasicNode3d {
+  const NULLVALUE:Self = BasicNode3d([Index::MAX; 8]);
+}
 impl Node for BasicNode3d {
   type Children = Zorder3d;
-  type Naive = Self;
-  fn new(children:&[u32]) -> Self { children.try_into().unwrap() }
-  fn naive(&self) -> Self::Naive { *self }
-  fn get(&self, child:Self::Children) -> Index { self[child.to_index()] }
-  fn set(&mut self, child:Self::Children, index:Index) { self[child.to_index()] = index }
+  type Naive = [Index; 8];
+  fn new(children:&[u32]) -> Self { BasicNode3d( children.try_into().unwrap() ) }
+  fn naive(&self) -> Self::Naive { self.0 }
+  fn get(&self, child:Self::Children) -> Index { self.0[child.to_index()] }
+  fn set(&mut self, child:Self::Children, index:Index) { self.0[child.to_index()] = index }
   fn with_child(&self, child: Self::Children, index:Index) -> Self {
     let mut new = *self;
     new.set(child, index);
