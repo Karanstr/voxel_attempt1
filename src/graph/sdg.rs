@@ -56,15 +56,10 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     trail 
   }
 
-  // I could do some clever bound checking, but this works just fine for internal api,
-  fn mut_refs(&mut self, idx: usize) -> &mut u32 {
-    if idx >= self.ref_count.len() { self.ref_count.resize(idx + 1, 0) }
-    &mut self.ref_count[idx]
+  fn add_ref(&mut self, idx: Index) {
+    if idx as usize >= self.ref_count.len() { self.ref_count.resize(idx as usize + 1, 0) }
+    self.ref_count[idx as usize] += 1;
   }
-
-  fn add_ref(&mut self, idx: Index) { *self.mut_refs(idx as usize) += 1; }
-
-  fn rem_ref(&mut self, idx: Index) { *self.mut_refs(idx as usize) -= 1; }
 
   fn get_ref(&self, idx: Index) -> u32 { self.ref_count[idx as usize] }
   
@@ -82,7 +77,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
 
   pub fn remove_leaf(&mut self, leaf:Index) {
     let leaf_list_idx = self.leaves.binary_search(&leaf).expect(format!("Index {leaf} isn't a leaf!!").as_str());
-    if *self.mut_refs(leaf as usize) > 0 { panic!("The graph still needs leaf {leaf}") } else {
+    if self.get_ref(leaf) > 0 { panic!("The graph still needs leaf {leaf}") } else {
       let leaf_node = self.nodes.free(leaf as usize).unwrap();
       self.index_lookup.remove(&leaf_node);
       self.leaves.remove(leaf_list_idx);
@@ -116,11 +111,10 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
   }
 
   fn decrement_ref(&mut self, idx:Index) {
-    if self.get_ref(idx) == 0 { panic!("Attempted to decrement unreferenced node {idx}!!") }
     let mut queue = vec![idx];
     while let Some(cur_idx) = queue.pop() {
-      self.rem_ref(cur_idx);
-      if self.get_ref(cur_idx) == 0 && !self.is_leaf(idx) {
+      self.ref_count[cur_idx as usize] -= 1;
+      if self.get_ref(cur_idx) == 0 && !self.is_leaf(cur_idx) {
         let old_node = self.nodes.free(cur_idx as usize).unwrap();
         self.index_lookup.remove(&old_node);
         for child in T::Children::all() {
@@ -209,48 +203,21 @@ pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<
   bfs_indexes
 }
 
-// pub fn iter_dfs<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<Index> {
-//   let mut queue = vec![head];
-//   let mut dfs_idxs = Vec::new();
-//   while let Some(idx) = queue.pop() {
-//     dfs_idxs.push(idx);
-//     if leaves.binary_search(&idx).is_ok() { continue }
-//     let parent = &nodes[idx as usize];
-//     for child in N::Children::all() {
-//       queue.push(parent.get(child));
-//     }
-//   }
-//   dfs_idxs
-// }
-//
-// pub fn rec_dfs<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<Index> {
-//   let mut dfs_idxs = vec![head];
-//   if leaves.binary_search(&head).is_ok() { return dfs_idxs }
-//   let parent = &nodes[head as usize];
-//   for child in N::Children::all() {
-//     dfs_idxs.append(&mut rec_dfs(nodes, parent.get(child), leaves));
-//   }
-//   dfs_idxs
-// }
-//
-//
-// Note to self, write some more tests!!
-//
 // Yap yap I know this should be a library. I'll do that once it's less everchanging.
-// #[test]
-// fn merge_check() {
-//   let mut sdg: SparseDirectedGraph<super::prelude::BasicNode3d> = SparseDirectedGraph::new();
-//   let empty = sdg.add_leaf();
-//   let full = sdg.add_leaf();
-//   let mut head = sdg.get_root(empty);
-//   for x in 0 .. 4 {
-//     for y in 0 .. 4 {
-//       for z in 0 .. 4 {
-//         let path = super::prelude::BasicPath3d::from_cell(UVec3::new(x, y, z), 2).steps();
-//         head = sdg.set_node(head, &path, full);
-//       }
-//     }
-//   }
-//   let _ = sdg.nodes.trim();
-//   assert_eq!(sdg.nodes.data().len(), 2);
-// }
+#[test]
+fn merge_check() {
+  let mut sdg: SparseDirectedGraph<super::prelude::BasicNode3d> = SparseDirectedGraph::new();
+  let empty = sdg.add_leaf();
+  let full = sdg.add_leaf();
+  let mut head = sdg.get_root(empty);
+  for x in 0 .. 4 {
+    for y in 0 .. 4 {
+      for z in 0 .. 4 {
+        let path = super::prelude::BasicPath3d::from_cell(UVec3::new(x, y, z), 2);
+        head = sdg.set_node(head, &path, full);
+      }
+    }
+  }
+  let _ = sdg.nodes.trim();
+  assert_eq!(sdg.nodes.unsafe_data().len(), 2);
+}
