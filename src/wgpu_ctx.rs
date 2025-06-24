@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, u32};
 use crate::graph::prelude::{BasicNode3d, Node, SparseDirectedGraph};
 use winit::window::Window;
 use crate::app::GameData;
@@ -309,8 +309,14 @@ impl<'window> WgpuCtx<'window> {
   }
 
   pub fn update_voxels(&self, sdg:&SparseDirectedGraph<BasicNode3d>) {
-    let voxels = sdg.nodes.data().clone();
-    self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&voxels));
+    let voxels = sdg.nodes.safe_data();
+    let safe_data: Vec<BasicNode3d> = voxels.iter().map(|node| {
+      match node {
+        Some(thing) => { **thing }
+        None => { BasicNode3d::new(&vec![u32::MAX; 8][..])}
+      }
+    }).collect();
+    self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&safe_data));
   }
   
   pub fn draw(&mut self, game_data: &GameData) {

@@ -680,6 +680,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lilypads"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06a9fb442558aa4d815e09ac97a340aa531cd7c913379fd55ac42f6511b3b960"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1617,15 +1626,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
-name = "vec_mem_heap"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cf194f5fba12bb1aabe1945de04483feae395be0b8f5cdb68ff21fdca8c9845"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1637,10 +1637,10 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "lilypads",
  "pollster",
  "serde",
  "serde_json",
- "vec_mem_heap",
  "wgpu",
  "winit",
 ]

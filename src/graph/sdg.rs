@@ -1,10 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use glam::UVec3;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use vec_mem_heap::prelude::*;
+// use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use lilypads::Pond;
 
 pub type Index = u32;
-
 // Just impl iter on path instead of making steps()
 pub trait Path<T : Childs> {
   fn new() -> Self;
@@ -21,7 +20,7 @@ pub trait Childs: std::fmt::Debug + Clone + Copy {
 }
 
 // Nodes are anything with valid children access
-pub trait Node : Clone + Copy + std::fmt::Debug + Nullable {
+pub trait Node : Clone + Copy + std::fmt::Debug {
   type Children : Childs;
   type Naive : Eq + std::hash::Hash + Copy;
   fn new(children:&[u32]) -> Self;
@@ -34,14 +33,16 @@ pub trait Node : Clone + Copy + std::fmt::Debug + Nullable {
 pub trait GraphNode : Node + std::hash::Hash + Eq {}
 
 pub struct SparseDirectedGraph<T: GraphNode> {
-  pub nodes : NodeField<T>,
-  pub index_lookup : HashMap<T, Index>,
-  pub leaves: Vec<Index>,
+  pub nodes : Pond<T>,
+  ref_count: Vec<u32>,
+  index_lookup : HashMap<T, Index>,
+  leaves: Vec<Index>,
 }
 impl<T: GraphNode> SparseDirectedGraph<T> {
   pub fn new() -> Self {
     Self {
-      nodes : NodeField::new(),
+      nodes : Pond::new(),
+      ref_count : Vec::new(),
       index_lookup : HashMap::new(),
       leaves : Vec::new(),
     }
@@ -55,29 +56,44 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     trail 
   }
 
+  // I could do some clever bound checking, but this works just fine for internal api,
+  fn mut_refs(&mut self, idx: usize) -> &mut u32 {
+    if idx >= self.ref_count.len() { self.ref_count.resize(idx + 1, 0) }
+    &mut self.ref_count[idx]
+  }
+
+  fn add_ref(&mut self, idx: Index) { *self.mut_refs(idx as usize) += 1; }
+
+  fn rem_ref(&mut self, idx: Index) { *self.mut_refs(idx as usize) -= 1; }
+
+  fn get_ref(&self, idx: Index) -> u32 { self.ref_count[idx as usize] }
+  
   pub fn add_leaf(&mut self) -> Index {
-    let idx = self.nodes.push(T::new(&vec![0; T::Children::COUNT])) as Index;
-    let leaf = T::new(&vec![idx; T::Children::COUNT]);
-    self.nodes.replace(idx as usize, leaf).unwrap();
-    self.leaves.insert(self.leaves.iter().position(|leaf| idx < *leaf ).unwrap_or(self.leaves.len()), idx);
+    let idx = self.nodes.next_allocated() as Index;
+    let leaf = T::new(&vec![idx; T::Children::COUNT][..]);
+    self.nodes.write(idx as usize, leaf);
+    self.leaves.insert(
+      self.leaves.iter().position(|leaf| idx < *leaf ).unwrap_or(self.leaves.len()),
+      idx
+    );
     self.index_lookup.insert(leaf, idx);
     idx
   }
 
   pub fn remove_leaf(&mut self, leaf:Index) {
-    let leaf_list_idx = self.leaves.binary_search(&leaf).expect(format!("Leaf {leaf} isn't a leaf!!").as_str());
-    if self.nodes.status(leaf as usize).unwrap() != 1 { panic!("The graph still needs leaf {leaf}") } else {
-      let leaf_node = self.nodes.remove_ref(leaf as usize).unwrap().unwrap();
+    let leaf_list_idx = self.leaves.binary_search(&leaf).expect(format!("Index {leaf} isn't a leaf!!").as_str());
+    if *self.mut_refs(leaf as usize) > 0 { panic!("The graph still needs leaf {leaf}") } else {
+      let leaf_node = self.nodes.free(leaf as usize).unwrap();
       self.index_lookup.remove(&leaf_node);
       self.leaves.remove(leaf_list_idx);
     }
   }
 
   fn add_node(&mut self, node:T) -> Index {
-    let index = self.nodes.push(node.clone()) as Index;
-    for child in T::Children::all() { self.nodes.add_ref(node.get(child) as usize).unwrap(); }
-    self.index_lookup.insert(node, index);
-    index
+    let idx = self.nodes.alloc(node.clone()) as Index;
+    for child in T::Children::all() { self.add_ref(node.get(child)); }
+    self.index_lookup.insert(node, idx);
+    idx
   }
 
   fn propagate_change(&mut self, path: &[T::Children], trail: &[Index], mut new_child: Index,) -> Index {
@@ -88,32 +104,34 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     new_child
   }
 
+  /// Sets the node at path to new_idx, then walks up the trail to head.
+  /// Removes one ref from head, adds one ref to the new head being returned
   pub fn set_node(&mut self, head:Index, path:&[T::Children], new_idx:Index) -> Index {
     let trail = self.get_trail(head, path);
     if *trail.last().unwrap() == new_idx { return head }
     let new_head = self.propagate_change(path, &trail, new_idx);
-    self.nodes.add_ref(new_head as usize).unwrap();
+    self.add_ref(new_head);
     self.decrement_ref(head);
     new_head
   }
 
   fn decrement_ref(&mut self, idx:Index) {
-    if self.nodes.status(idx as usize).unwrap() <= 2 && self.is_leaf(idx) { panic!("Decrement would remove index {idx}, a leaf. Please remove_leaf instead") } 
-    let mut queue = VecDeque::from([idx as usize]);
-    while let Some(cur_idx) = queue.pop_front() {
-      self.nodes.remove_ref(cur_idx).unwrap();
-      if self.nodes.status(cur_idx).unwrap() == 1 {
-        let old_node = self.nodes.remove_ref(cur_idx).unwrap().unwrap();
+    if self.get_ref(idx) == 0 { panic!("Attempted to decrement unreferenced node {idx}!!") }
+    let mut queue = vec![idx];
+    while let Some(cur_idx) = queue.pop() {
+      self.rem_ref(cur_idx);
+      if self.get_ref(cur_idx) == 0 && !self.is_leaf(idx) {
+        let old_node = self.nodes.free(cur_idx as usize).unwrap();
         self.index_lookup.remove(&old_node);
         for child in T::Children::all() {
-          let child_idx = old_node.get(child);
-          if self.is_leaf(child_idx) { continue }
-          queue.push_back(child_idx as usize)
+          queue.push(old_node.get(child));
         }
       }
     }
   }
   
+  pub fn get_root(&mut self, idx:Index) -> Index { self.add_ref(idx); idx }
+
   fn find_index(&self, node:&T) -> Option<Index> { self.index_lookup.get(node).copied() }
   
   fn is_leaf(&self, idx:Index) -> bool { self.leaves.binary_search(&idx).is_ok() }
@@ -124,7 +142,6 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
 
   pub fn descend(&self, head:Index, path:&[T::Children]) -> Index { *self.get_trail(head, path).last().unwrap() }
 
-  pub fn get_root(&mut self, idx:Index) -> Index { self.nodes.add_ref(idx as usize).unwrap(); idx }
 
 }
 
@@ -192,6 +209,31 @@ pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<
   bfs_indexes
 }
 
+// pub fn iter_dfs<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<Index> {
+//   let mut queue = vec![head];
+//   let mut dfs_idxs = Vec::new();
+//   while let Some(idx) = queue.pop() {
+//     dfs_idxs.push(idx);
+//     if leaves.binary_search(&idx).is_ok() { continue }
+//     let parent = &nodes[idx as usize];
+//     for child in N::Children::all() {
+//       queue.push(parent.get(child));
+//     }
+//   }
+//   dfs_idxs
+// }
+//
+// pub fn rec_dfs<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<Index> {
+//   let mut dfs_idxs = vec![head];
+//   if leaves.binary_search(&head).is_ok() { return dfs_idxs }
+//   let parent = &nodes[head as usize];
+//   for child in N::Children::all() {
+//     dfs_idxs.append(&mut rec_dfs(nodes, parent.get(child), leaves));
+//   }
+//   dfs_idxs
+// }
+//
+//
 // Note to self, write some more tests!!
 //
 // Yap yap I know this should be a library. I'll do that once it's less everchanging.

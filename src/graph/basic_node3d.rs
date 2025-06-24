@@ -3,7 +3,6 @@ use super::sdg::{
   Childs, Path, Index
 };
 use glam::UVec3;
-use vec_mem_heap::Nullable;
 
 // Front-Back Z
 // Top-Bottom Y
@@ -113,9 +112,6 @@ impl<Zorder3d : Childs> Path<Zorder3d> for Vec<Zorder3d> {
 #[repr(C)]
 #[derive(PartialEq, Eq, Debug, Clone, Copy, std::hash::Hash, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct BasicNode3d([Index; 8]);
-impl Nullable for BasicNode3d {
-  const NULLVALUE:Self = BasicNode3d([Index::MAX; 8]);
-}
 impl Node for BasicNode3d {
   type Children = Zorder3d;
   type Naive = [Index; 8];
