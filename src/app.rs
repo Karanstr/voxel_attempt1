@@ -223,7 +223,7 @@ impl<'window> App<'window> {
 
   fn toggle_mouse_capture(&mut self) {
     let window = self.window.get().unwrap();
-    let new_mode = if self.mouse_captured { CursorGrabMode::None } else { CursorGrabMode::Locked };
+    let new_mode = if self.mouse_captured { CursorGrabMode::None } else { CursorGrabMode::Confined };
     if window.set_cursor_grab(new_mode).is_ok() {
       window.set_cursor_visible(self.mouse_captured);
       self.mouse_captured = !self.mouse_captured;
