@@ -23,9 +23,7 @@ impl ObjectData {
     let height = 8;
     let size = 2u32.pow(height);
     {
-      // let mut count = 0;
       // Floating island base (ellipsoid shape)
-      // Why so slow??
       for x in 40..216 {
         for y in 80..120 {
           for z in 40..216 {
@@ -37,7 +35,6 @@ impl ObjectData {
               let path:Vec<Zorder3d> = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
               head = sdg.set_node(head, &path, 1); // 1 = dirt
             }
-            // dbg!(count);
           }
         }
       }

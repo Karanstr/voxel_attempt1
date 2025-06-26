@@ -40,6 +40,7 @@ struct RayHit {
   axis: vec3<bool>,
   t: f32,
   voxel: vec2<u32>,
+  steps: u32,
 }
 
 // Cam_pos is normalized to 0.0 - 1.0 being within the region NOT TRUE YET
@@ -57,12 +58,13 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let hit = dda_vox(ray_origin, inv_dir);
 
   var base_color: vec3<f32>;
-  switch hit.voxel[0] {
-    case 0: { base_color = vec3(0.0); }
-    case 1: { base_color = make_color(115, 20, 146); }
-    case 2: { base_color = make_color(20, 100, 20); }
-    default: { base_color = vec3(1.0); } // Unknown block
-  }
+  base_color = vec3(1.0 / f32(hit.steps));
+  // switch hit.voxel[0] {
+  //   case 0: { base_color = vec3(0.0); }
+  //   case 1: { base_color = make_color(115, 20, 146); }
+  //   case 2: { base_color = make_color(20, 100, 20); }
+  //   default: { base_color = vec3(1.0); } // Unknown block
+  // }
   let normal_color = vec3(
     1.0 - f32(hit.axis.z) * 0.2,
     1.0 + f32(hit.axis.x) * 0.3,
@@ -106,6 +108,7 @@ fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
     // Sparse skipping
     t_next = select(t_next, sparse_next, sparse_next == vec3(result.t));
     cur_voxel = select(cur_voxel, cur_voxel + additional_blocks, sparse_next == vec3(result.t));
+    result.steps += 1;
 
     // Catchup loop
     loop {

@@ -73,17 +73,14 @@ impl Childs for Zorder3d {
   }
 }
 
-// This needs revamping
 pub type BasicPath3d = Vec<Zorder3d>;
 impl<Zorder3d : Childs> Path<Zorder3d> for Vec<Zorder3d> {
-  fn new() -> Self { Vec::new() }
-
   fn to_cell(&self) -> UVec3 {
     let mut x = 0;
     let mut y = 0;
     let mut z = 0;
-    for layer in 0 .. self.depth() {
-      let coord = self.step(layer as usize).to_coord();
+    for layer in 0 .. self.len() {
+      let coord = self[layer as usize].to_coord();
       x |= (coord.x as u32) << layer;
       y |= (coord.y as u32) << layer;
       z |= (coord.z as u32) << layer;
@@ -105,8 +102,6 @@ impl<Zorder3d : Childs> Path<Zorder3d> for Vec<Zorder3d> {
     path
   }
 
-  fn step(&self, idx:usize ) -> Zorder3d { self[idx] }
-  fn depth(&self) -> u32 { self.len() as u32 }
 }
 
 #[repr(C)]
@@ -114,9 +109,7 @@ impl<Zorder3d : Childs> Path<Zorder3d> for Vec<Zorder3d> {
 pub struct BasicNode3d([Index; 8]);
 impl Node for BasicNode3d {
   type Children = Zorder3d;
-  type Naive = [Index; 8];
   fn new(children:&[u32]) -> Self { BasicNode3d( children.try_into().unwrap() ) }
-  fn naive(&self) -> Self::Naive { self.0 }
   fn get(&self, child:Self::Children) -> Index { self.0[child.to_index()] }
   fn set(&mut self, child:Self::Children, index:Index) { self.0[child.to_index()] = index }
   fn with_child(&self, child: Self::Children, index:Index) -> Self {

@@ -4,13 +4,9 @@ use glam::UVec3;
 use lilypads::Pond;
 
 pub type Index = u32;
-// Just impl iter on path instead of making steps()
 pub trait Path<T : Childs> {
-  fn new() -> Self;
-  fn step(&self, idx:usize) -> T;
   fn to_cell(&self) -> UVec3;
   fn from_cell(cell:UVec3, depth:u32) -> Self;
-  fn depth(&self) -> u32;
 }
 pub trait Childs: std::fmt::Debug + Clone + Copy {
   fn all() -> impl Iterator<Item = Self>;
@@ -22,14 +18,12 @@ pub trait Childs: std::fmt::Debug + Clone + Copy {
 // Nodes are anything with valid children access
 pub trait Node : Clone + Copy + std::fmt::Debug {
   type Children : Childs;
-  type Naive : Eq + std::hash::Hash + Copy;
   fn new(children:&[u32]) -> Self;
-  fn naive(&self) -> Self::Naive;
   fn get(&self, child: Self::Children) -> Index;
   fn set(&mut self, child: Self::Children, index:Index);
   fn with_child(&self, child: Self::Children, index:Index) -> Self;
 }
-// GraphNodes are nodes which can be hashed and copied, making them valid for SDG storage
+// GraphNodes are nodes which can be hashed, making them valid for SDG storage
 pub trait GraphNode : Node + std::hash::Hash + Eq {}
 
 pub struct SparseDirectedGraph<T: GraphNode> {
@@ -99,8 +93,6 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     new_child
   }
 
-  /// Sets the node at path to new_idx, then walks up the trail to head.
-  /// Removes one ref from head, adds one ref to the new head being returned
   pub fn set_node(&mut self, head:Index, path:&[T::Children], new_idx:Index) -> Index {
     let trail = self.get_trail(head, path);
     if *trail.last().unwrap() == new_idx { return head }
@@ -203,7 +195,6 @@ pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<
   bfs_indexes
 }
 
-// Yap yap I know this should be a library. I'll do that once it's less everchanging.
 #[test]
 fn merge_check() {
   let mut sdg: SparseDirectedGraph<super::prelude::BasicNode3d> = SparseDirectedGraph::new();
