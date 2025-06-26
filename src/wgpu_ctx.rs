@@ -328,7 +328,7 @@ impl<'window> WgpuCtx<'window> {
     let data = Data::new(
       game_data.obj_data.head,
       game_data.obj_data.bounds,
-      game_data.camera.position,// / game_data.obj_data.bounds, // Normalize to percentage through region
+      game_data.camera.position / game_data.obj_data.bounds, // Normalize to percentage through region
       game_data.camera.basis(),
       game_data.camera.aspect_ratio,
       game_data.camera.fov,

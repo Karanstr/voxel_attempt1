@@ -49,13 +49,13 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let inv_dir = sign(ray_dir) / max(abs(ray_dir), vec3(FP_BUMP));
 
   var ray_origin = data.cam_pos;
-  if (any(clamp(data.cam_pos, vec3(0.0), vec3<f32>(ENTIRE_BIT)) != data.cam_pos)) { 
-  // if (any(clamp(data.cam_pos, vec3(0.0), vec3(1.0)) != data.cam_pos)) { 
+  // if (any(data.cam_pos < vec3(0.0)) || any(data.cam_pos >= vec3<f32>(ENTIRE_BIT))) {
+  if (any(data.cam_pos < vec3(0.0)) || any(data.cam_pos > vec3(1.0))) {
     let t_start = aabb_intersect(data.cam_pos, inv_dir);
     if t_start == -314159.0 { return vec4(0.0); }
     ray_origin += ray_dir * max(0, t_start);
   } 
-  let hit = dda_vox(ray_origin, inv_dir);
+  let hit = dda_vox_v3(ray_origin * data._obj_bounds, ray_dir, inv_dir);
 
   var base_color: vec3<f32>;
   base_color = vec3(1.0 / f32(hit.steps));
@@ -75,28 +75,20 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
 
 fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r), f32(g), f32(b)) / 255.0; }
 
-// The 7th bit represents half the voxel volume.
-const HALF_BIT:u32 = 1 << 7;
-const ENTIRE_BIT:u32 = 1 << 8;
-
 // ray_origin is currently guaranteed to start within bounds
-fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
+fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   let step = vec3<i32>(sign(inv_dir));
-  // Top new system, bottom old system (remember to change the ray_origin normalization in wgpu_ctx)
-  // let rounded_pos = (ray_origin + vec3<f32>(step) * FP_BUMP) * f32(ENTIRE_BIT);
-  // Ceil if moving positively, floor otherwise
-  // let dir_rounded_pos = rounded_pos + select(vec3(1.0), vec3(0.0), step < vec3<i32>(0));
-  // let normal_pos = (ray_origin) * f32(ENTIRE_BIT);
-  // var t_next = select(rounded_pos - normal_pos, vec3(10000000.0), step == vec3(0)) * inv_dir;
-  // var cur_voxel = vec3<i32>(rounded_pos);
   let rounded_pos = select(ceil(ray_origin + FP_BUMP), floor(ray_origin - FP_BUMP), step < vec3<i32>(0));
   var t_next = select(rounded_pos - ray_origin, vec3(10000000.0), step == vec3(0)) * inv_dir;
-  var cur_voxel = vec3<i32>(floor(ray_origin + FP_BUMP * vec3<f32>(step)));
-  
+
   var result = RayHit();
   for (var i = 0u; i < 300u; i++) {
+    let cur_pos = ray_origin + FP_BUMP * vec3<f32>(step) + ray_dir * result.t;
+    if (any(cur_pos < vec3(0.0)) || any(cur_pos > vec3(data._obj_bounds))) { break; }
+    let cur_voxel = vec3<i32>(cur_pos);
     result.voxel = vox_read(data.obj_head, vec3<u32>(cur_voxel));
     if result.voxel[0] != 0u { break; }
+    result.steps += 1;
 
     let mask = vec3<i32>((1 << result.voxel[1]) - 1);
     let offset = cur_voxel & mask;
@@ -106,18 +98,14 @@ fn dda_vox(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
     result.axis = sparse_next == vec3<f32>(result.t);
 
     // Sparse skipping
-    t_next = select(t_next, sparse_next, sparse_next == vec3(result.t));
-    cur_voxel = select(cur_voxel, cur_voxel + additional_blocks, sparse_next == vec3(result.t));
-    result.steps += 1;
+    t_next = select(t_next, sparse_next + abs(inv_dir), sparse_next == vec3(result.t));
 
     // Catchup loop
     loop {
       let t_cur = min(min(t_next.x, t_next.y), t_next.z);
-      cur_voxel = select(cur_voxel, cur_voxel + step, t_next == vec3(t_cur));
-      t_next = select(t_next, t_next + abs(inv_dir), t_next == vec3(t_cur));
       if (t_cur + FP_BUMP >= result.t) { break; }
+      t_next = select(t_next, t_next + abs(inv_dir), t_next == vec3(t_cur));
     }
-    if (any(clamp(cur_voxel, vec3<i32>(0), vec3<i32>(ENTIRE_BIT - 1)) != cur_voxel)) { break; }
   }
   return result;
 }
