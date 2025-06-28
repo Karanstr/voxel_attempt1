@@ -1,4 +1,3 @@
-use crate::graph::basic_node3d::Zorder3d;
 use crate::graph::prelude::*;
 use crate::wgpu_ctx::WgpuCtx;
 use crate::camera::Camera;
@@ -27,12 +26,11 @@ impl ObjectData {
       for x in 40..216 {
         for y in 80..120 {
           for z in 40..216 {
-            // count += 1;
             let dx = x as i32 - 128;
             let dy = y as i32 - 100;
             let dz = z as i32 - 128;
             if (dx*dx) + (dy*dy)*16 + (dz*dz) < 6400 {
-              let path:Vec<Zorder3d> = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
+              let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
               head = sdg.set_node(head, &path, 1); // 1 = dirt
             }
           }
@@ -43,9 +41,9 @@ impl ObjectData {
       for x in 60..196 {
         for z in 60..196 {
           for y in (80 .. 120).rev() {
-            let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
+            let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
             if sdg.descend(head, &path) != 0 {
-              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
+              let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
               head = sdg.set_node(head, &path, 2); // 2 = grass
               break;
             }
@@ -60,7 +58,7 @@ impl ObjectData {
           let dz = z as i32 - 128;
           if dx*dx + dz*dz < 400 {
             for y in 118..121 {
-              let path = BasicPath3d::from_cell(UVec3::new(x, y, z), 8);
+              let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
               head = sdg.set_node(head, &path, 0); // 3 = water
             }
           }
@@ -89,7 +87,7 @@ impl Default for GameData {
     Self {
       camera: Camera::default(),
       sdg,
-      obj_data
+      obj_data,
     }
   }
 }

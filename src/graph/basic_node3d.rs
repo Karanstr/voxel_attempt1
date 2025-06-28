@@ -1,36 +1,51 @@
-use super::sdg::{
-  Node, GraphNode,
-  Childs, Path, Index
-};
+use super::sdg::{ Node, GraphNode, Childs, Path, Index, };
 use glam::UVec3;
 
+
+// These names might be backwards, translating from top-left origin to bottom left origin
 // Front-Back Z
 // Top-Bottom Y
 // Left-Right X
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum Zorder3d {
-  FrontTopLeft,
-  FrontTopRight,
-  FrontBottomLeft,
-  FrontBottomRight,
-  BackTopLeft,
-  BackTopRight,
-  BackBottomLeft,
-  BackBottomRight
+  FrontTopLeft,     // 000
+  FrontTopRight,    // 001
+  FrontBottomLeft,  // 010
+  FrontBottomRight, // 011
+  BackTopLeft,      // 100
+  BackTopRight,     // 101
+  BackBottomLeft,   // 110
+  BackBottomRight   // 111
 }
-impl Zorder3d {
-  fn to_index(&self) -> usize {
-    match self {
-      Self::FrontTopLeft => 0, // 000
-      Self::FrontTopRight => 1, // 001
-      Self::FrontBottomLeft => 2, // 010
-      Self::FrontBottomRight => 3, // 011
-      Self::BackTopLeft => 4, // 100
-      Self::BackTopRight => 5, // 101
-      Self::BackBottomLeft => 6, // 110
-      Self::BackBottomRight => 7, // 111
+impl Path<Zorder3d> for Zorder3d {
+  fn to_cell(path: Vec<Zorder3d>) -> UVec3 {
+    let mut x = 0;
+    let mut y = 0;
+    let mut z = 0;
+    for layer in 0 .. path.len() {
+      let coord = path[layer as usize].to_coord();
+      x |= (coord.x as u32) << layer;
+      y |= (coord.y as u32) << layer;
+      z |= (coord.z as u32) << layer;
     }
+    UVec3::new(x, y, z)
   }
+
+  fn path_from(cell:UVec3, depth:u32) -> Vec<Self> {
+    if cell.max_element() > (1 << depth) - 1 { panic!("Cell is too large for depth {depth}") }
+    let mut path = Vec::with_capacity(depth as usize);
+    let mut x = cell.x;
+    let mut y = cell.y;
+    let mut z = cell.z;
+    for _ in 0 .. depth {
+      path.push(Self::new(UVec3::new(x & 0b1, y & 0b1, z & 0b1)));
+      x >>= 1; y >>= 1; z >>= 1;
+    }
+    path.reverse();
+    path
+  }
+
 }
 impl Childs for Zorder3d {
   const COUNT: usize = 8;
@@ -46,8 +61,8 @@ impl Childs for Zorder3d {
       Self::BackBottomRight
     ].into_iter()
   }
-  fn from(coord: UVec3) -> Self {
-    match coord {
+  fn new(quadrant: UVec3) -> Self {
+    match quadrant {
       UVec3 {x: 0, y: 0, z: 0} => Self::FrontTopLeft,
       UVec3 {x: 1, y: 0, z: 0} => Self::FrontTopRight,
       UVec3 {x: 0, y: 1, z: 0} => Self::FrontBottomLeft,
@@ -60,48 +75,9 @@ impl Childs for Zorder3d {
     }
   }
   fn to_coord(&self) -> UVec3 {
-    match self {
-      Self::FrontTopLeft => UVec3::new(0, 0, 0),
-      Self::FrontTopRight => UVec3::new(1, 0, 0),
-      Self::FrontBottomLeft => UVec3::new(0, 1, 0),
-      Self::FrontBottomRight => UVec3::new(1, 1, 0),
-      Self::BackTopLeft => UVec3::new(0, 0, 1),
-      Self::BackTopRight => UVec3::new(1, 0, 1),
-      Self::BackBottomLeft => UVec3::new(0, 1, 1),
-      Self::BackBottomRight => UVec3::new(1, 1, 1)
-    }
+    let bits = *self as u32;
+    UVec3::new(bits & 1, bits & 0b10, bits & 0b100)
   }
-}
-
-pub type BasicPath3d = Vec<Zorder3d>;
-impl<Zorder3d : Childs> Path<Zorder3d> for Vec<Zorder3d> {
-  fn to_cell(&self) -> UVec3 {
-    let mut x = 0;
-    let mut y = 0;
-    let mut z = 0;
-    for layer in 0 .. self.len() {
-      let coord = self[layer as usize].to_coord();
-      x |= (coord.x as u32) << layer;
-      y |= (coord.y as u32) << layer;
-      z |= (coord.z as u32) << layer;
-    }
-    UVec3::new(x, y, z)
-  }
-
-  fn from_cell(cell: UVec3, depth: u32) -> Self {
-    if cell.max_element() > (1 << depth) - 1 { panic!("Cell is too large for depth {depth}") }
-    let mut path = Vec::with_capacity(depth as usize);
-    let mut x = cell.x;
-    let mut y = cell.y;
-    let mut z = cell.z;
-    for _ in 0 .. depth {
-      path.push(Zorder3d::from(UVec3::new(x & 0b1, y & 0b1, z & 0b1)));
-      x >>= 1; y >>= 1; z >>= 1;
-    }
-    path.reverse();
-    path
-  }
-
 }
 
 #[repr(C)]
@@ -110,8 +86,8 @@ pub struct BasicNode3d([Index; 8]);
 impl Node for BasicNode3d {
   type Children = Zorder3d;
   fn new(children:&[u32]) -> Self { BasicNode3d( children.try_into().unwrap() ) }
-  fn get(&self, child:Self::Children) -> Index { self.0[child.to_index()] }
-  fn set(&mut self, child:Self::Children, index:Index) { self.0[child.to_index()] = index }
+  fn get(&self, child:Self::Children) -> Index { self.0[child as usize] }
+  fn set(&mut self, child:Self::Children, index:Index) { self.0[child as usize] = index }
   fn with_child(&self, child: Self::Children, index:Index) -> Self {
     let mut new = *self;
     new.set(child, index);

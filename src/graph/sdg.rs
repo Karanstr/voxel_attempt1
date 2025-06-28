@@ -4,14 +4,15 @@ use glam::UVec3;
 use lilypads::Pond;
 
 pub type Index = u32;
+#[allow(unused)]
 pub trait Path<T : Childs> {
-  fn to_cell(&self) -> UVec3;
-  fn from_cell(cell:UVec3, depth:u32) -> Self;
+  fn to_cell(path: Vec<T>) -> UVec3;
+  fn path_from(cell:UVec3, depth:u32) -> Vec<T>;
 }
 pub trait Childs: std::fmt::Debug + Clone + Copy {
   fn all() -> impl Iterator<Item = Self>;
   const COUNT: usize;
-  fn from(coord: UVec3) -> Self;
+  fn new(quadrant: UVec3) -> Self;
   fn to_coord(&self) -> UVec3;
 }
 
@@ -69,7 +70,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     idx
   }
 
-  pub fn remove_leaf(&mut self, leaf:Index) {
+  pub fn _remove_leaf(&mut self, leaf:Index) {
     let leaf_list_idx = self.leaves.binary_search(&leaf).expect(format!("Index {leaf} isn't a leaf!!").as_str());
     if self.get_ref(leaf) > 0 { panic!("The graph still needs leaf {leaf}") } else {
       let leaf_node = self.nodes.free(leaf as usize).unwrap();
