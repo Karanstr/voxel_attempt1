@@ -1,4 +1,5 @@
 use std::{sync::Arc, u32};
+#[allow(unused)]
 use crate::graph::prelude::{BasicNode3d, Node, SparseDirectedGraph};
 use winit::window::Window;
 use crate::app::GameData;
@@ -83,7 +84,7 @@ impl<'window> WgpuCtx<'window> {
       })
   }
 
-  pub async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
+  async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
     let instance = wgpu::Instance::default();
     let surface = instance.create_surface(Arc::clone(&window)).unwrap();
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -272,6 +273,7 @@ impl<'window> WgpuCtx<'window> {
 
   pub fn new(window: Arc<Window>) -> WgpuCtx<'window> { pollster::block_on(WgpuCtx::new_async(window)) }
 
+  // Windows sets window size to (0,0) when minimized, so we need a minimize check somewhere
   pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
     self.surface_config.width = new_size.width;
     self.surface_config.height = new_size.height;
@@ -313,7 +315,9 @@ impl<'window> WgpuCtx<'window> {
     let safe_data: Vec<BasicNode3d> = voxels.iter().map(|node| {
       match node {
         Some(thing) => { **thing }
-        None => { BasicNode3d::new(&vec![u32::MAX; 8][..])}
+        None => { [u32::MAX; 8] } // This is trechnically wrong, officially I should be using
+                                  // BasicNode3d::new(&vec![u32::MAX; BasicNode3d::Size]) or
+                                  // whatever, but that's a massive pain
       }
     }).collect();
     self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&safe_data));

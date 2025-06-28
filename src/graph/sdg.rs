@@ -205,7 +205,7 @@ fn merge_check() {
   for x in 0 .. 4 {
     for y in 0 .. 4 {
       for z in 0 .. 4 {
-        let path = super::prelude::BasicPath3d::from_cell(UVec3::new(x, y, z), 2);
+        let path = super::prelude::Zorder3d::path_from(UVec3::new(x, y, z), 2);
         head = sdg.set_node(head, &path, full);
       }
     }
