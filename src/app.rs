@@ -11,6 +11,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 use glam::{Vec2, Vec3, UVec3};
 use std::cell::OnceCell;
 use std::collections::VecDeque;
+use fastnoise_lite::{FastNoiseLite, NoiseType};
 
 pub struct ObjectData {
   pub head: Index,
@@ -19,52 +20,23 @@ pub struct ObjectData {
 impl ObjectData {
   pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
-    let height = 8;
+    let height = 9;
     let size = 2u32.pow(height);
-    {
-      // Floating island base (ellipsoid shape)
-      for x in 40..216 {
-        for y in 80..120 {
-          for z in 40..216 {
-            let dx = x as i32 - 128;
-            let dy = y as i32 - 100;
-            let dz = z as i32 - 128;
-            if (dx*dx) + (dy*dy)*16 + (dz*dz) < 6400 {
-              let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
-              head = sdg.set_node(head, &path, 1); // 1 = dirt
-            }
-          }
-        }
-      }
-
-      // Grassy surface layer on top of island
-      for x in 60..196 {
-        for z in 60..196 {
-          for y in (80 .. 120).rev() {
-            let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
-            if sdg.descend(head, &path) != 0 {
-              let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
-              head = sdg.set_node(head, &path, 2); // 2 = grass
-              break;
-            }
-          }
-        }
-      }
-
-      // Crater lake in the middle
-      for x in 108..148 {
-        for z in 108..148 {
-          let dx = x as i32 - 128;
-          let dz = z as i32 - 128;
-          if dx*dx + dz*dz < 400 {
-            for y in 118..121 {
-              let path = Zorder3d::path_from(UVec3::new(x, y, z), 8);
-              head = sdg.set_node(head, &path, 0); // 3 = water
-            }
+    let mut noise = FastNoiseLite::new();
+    noise.set_seed(None);
+    noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
+    for x in 0 .. size {
+      for y in 0 .. size {
+        for z in 0 .. size {
+          let noise = noise.get_noise_3d(x as f32, y as f32, z as f32);
+          if noise > 0.0 {
+            let path = Zorder3d::path_from(UVec3::new(x, y, z), height);
+            head = sdg.set_node(head, &path, 1);
           }
         }
       }
     }
+
     ObjectData {
       head,
       bounds: size as f32
@@ -74,6 +46,7 @@ impl ObjectData {
 
 pub struct GameData {
   pub camera: Camera,
+  pub speed: f32,
   pub sdg: SparseDirectedGraph<BasicNode3d>,
   pub obj_data: ObjectData,
 }
@@ -86,6 +59,7 @@ impl Default for GameData {
     let obj_data = ObjectData::new(&mut sdg);
     Self {
       camera: Camera::default(),
+      speed: 64.0,
       sdg,
       obj_data,
     }
@@ -239,7 +213,7 @@ impl<'window> App<'window> {
       self.mouse_delta = Vec2::ZERO;
     }
     if !self.keys_pressed.is_empty() {
-      let camera_speed = 15.0 * dt;
+      let camera_speed = self.game_data.speed * dt;
       let (right, _, mut forward) = self.game_data.camera.basis().into();
       forward = forward.with_y(0.0).normalize();
       let mut displacement = Vec3::ZERO;
@@ -261,6 +235,12 @@ impl<'window> App<'window> {
       }
       if self.keys_pressed.contains(&KeyCode::ShiftLeft) {
         displacement -= Vec3::Y;
+      }
+      if self.keys_pressed.contains(&KeyCode::Equal) {
+        self.game_data.speed *= 1.001;
+      }
+      if self.keys_pressed.contains(&KeyCode::Minus) {
+        self.game_data.speed /= 1.001;
       }
       self.game_data.camera.position += displacement.normalize_or_zero() * camera_speed;
     }

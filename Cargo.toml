@@ -12,3 +12,5 @@ bytemuck = { version = "1.14", features = ["derive"] }
 winit = "0.30"
 wgpu = "25.0"
 pollster = "0.4.0"
+ahash = "0.8"
+fastnoise-lite = "1.1"

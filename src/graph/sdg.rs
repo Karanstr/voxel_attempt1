@@ -1,4 +1,5 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{/*HashMap,*/ VecDeque};
+use ahash::AHashMap;
 use glam::UVec3;
 // use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use lilypads::Pond;
@@ -30,7 +31,7 @@ pub trait GraphNode : Node + std::hash::Hash + Eq {}
 pub struct SparseDirectedGraph<T: GraphNode> {
   pub nodes : Pond<T>,
   ref_count: Vec<u32>,
-  index_lookup : HashMap<T, Index>,
+  index_lookup : AHashMap<T, Index>,
   leaves: Vec<Index>,
 }
 impl<T: GraphNode> SparseDirectedGraph<T> {
@@ -38,7 +39,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     Self {
       nodes : Pond::new(),
       ref_count : Vec::new(),
-      index_lookup : HashMap::new(),
+      index_lookup : AHashMap::new(),
       leaves : Vec::new(),
     }
   }

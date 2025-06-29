@@ -76,8 +76,8 @@ fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r), f32(g),
 // ray_origin is currently guaranteed to start within bounds
 fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   let step = vec3<i32>(sign(inv_dir));
-  let dir_0 = step == vec3(0);
   let dir_neg = step < vec3(0);
+  let dir_0 = step == vec3(0);
   var result = RayHit();
   for (var i = 0u; i < 300u; i++) {
     let cur_pos = ray_origin + FP_BUMP * vec3<f32>(step) + ray_dir * result.t;
@@ -87,8 +87,7 @@ fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
     if result.voxel[0] != 0u { break; }
     result.steps += 1;
 
-    let lod_mask = vec3(~0u << result.voxel[1]);
-    let neg_wall = cur_voxel & lod_mask;
+    let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]);
     let pos_wall = neg_wall + (1u << result.voxel[1]);
     let rounded_pos = vec3<f32>(select(pos_wall, neg_wall, dir_neg));
     let t_wall = select(rounded_pos - ray_origin, vec3(10000000.0), dir_0) * inv_dir;
@@ -101,7 +100,7 @@ fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
 /// Trusts that you submit a cell which fits within the root
 fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
   var cur_idx = head;
-  var height = 8u;
+  var height = 9u;
   while height != 0 {
     let child = cell >> vec3<u32>(height - 1) & vec3<u32>(1);
     let next_idx = voxels[cur_idx].children[child.z << 2 | child.y << 1 | child.x];
