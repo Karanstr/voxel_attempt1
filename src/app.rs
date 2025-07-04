@@ -20,19 +20,18 @@ pub struct ObjectData {
 impl ObjectData {
   pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
-    let height = 9;
+    let height = 11;
     let size = 2u32.pow(height);
     let mut noise = FastNoiseLite::new();
     noise.set_seed(None);
     noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
-    for x in 0 .. size {
-      for y in 0 .. size {
-        for z in 0 .. size {
-          let noise = noise.get_noise_3d(x as f32, y as f32, z as f32);
-          if noise > 0.0 {
-            let path = Zorder3d::path_from(UVec3::new(x, y, z), height);
-            head = sdg.set_node(head, &path, 1);
-          }
+    noise.set_frequency(Some(0.0027));
+    for x in (size as f32 / 4.) as u32 .. (size as f32 * 3./4.) as u32 {
+      for z in (size as f32 / 4.) as u32 .. (size as f32 * 3./4.) as u32 {
+        let sample = noise.get_noise_2d(x as f32, z as f32) * 0.1;
+        if sample > 0.0 {
+          let path = Zorder3d::path_from(UVec3::new(x, (sample * size as f32) as u32, z), height);
+          head = sdg.set_node(head, &path, 1);
         }
       }
     }
@@ -54,8 +53,7 @@ impl Default for GameData {
   fn default() -> Self {
     let mut sdg = SparseDirectedGraph::new();
     let _empty = sdg.add_leaf();
-    let _dirt = sdg.add_leaf();
-    let _grass = sdg.add_leaf();
+    let _full = sdg.add_leaf();
     let obj_data = ObjectData::new(&mut sdg);
     Self {
       camera: Camera::default(),
