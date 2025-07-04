@@ -1,6 +1,6 @@
 const WG_SIZE = 8;
-const FP_BUMP: f32 = 0.0001;
-const TREE_HEIGHT = 11u;
+const FP_BUMP: f32 = 0.01;
+const TREE_HEIGHT = 12u;
 
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba8unorm, write>;
@@ -77,7 +77,7 @@ fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
   var result = RayHit();
   for (var i = 0u; i < 500u; i++) {
     let cur_pos = ray_origin + ray_dir * result.t + bump;
-    if (any(cur_pos < vec3(0.0)) || any(cur_pos > vec3(data._obj_bounds))) { break; }
+    if (any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds))) { break; }
     let cur_voxel = vec3<u32>(cur_pos);
     result.voxel = vox_read(data.obj_head, cur_voxel);
     if result.voxel[0] != 0u { break; }

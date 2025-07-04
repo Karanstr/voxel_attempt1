@@ -1,5 +1,5 @@
 // ALWAYS UPDATE CORESPONDING DOWNSCALE VALUE IN ./wgpu_ctx.rs
-const UPSCALE = 1;
+const UPSCALE = 2;
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {

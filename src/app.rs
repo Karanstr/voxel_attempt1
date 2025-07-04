@@ -20,14 +20,14 @@ pub struct ObjectData {
 impl ObjectData {
   pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
-    let height = 11;
+    let height = 12;
     let size = 2u32.pow(height);
     let mut noise = FastNoiseLite::new();
     noise.set_seed(None);
     noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
     noise.set_frequency(Some(0.0027));
-    for x in (size as f32 / 4.) as u32 .. (size as f32 * 3./4.) as u32 {
-      for z in (size as f32 / 4.) as u32 .. (size as f32 * 3./4.) as u32 {
+    for x in 0 .. size {
+      for z in 0 .. size {
         let sample = noise.get_noise_2d(x as f32, z as f32) * 0.1;
         if sample > 0.0 {
           let path = Zorder3d::path_from(UVec3::new(x, (sample * size as f32) as u32, z), height);
