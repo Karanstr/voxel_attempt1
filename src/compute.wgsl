@@ -71,20 +71,22 @@ fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
   let dir_neg = step < vec3(0);
   var result = RayHit();
   for (var i = 0u; i < 500u; i++) {
-    result.steps = i;
-    let cur_pos = bitcast<vec3<f32>>(bitcast<vec3<i32>>(ray_origin + ray_dir * result.t + 0.0001 * vec3<f32>(step)) + 3 * step);
+    // Compute current position and bump it in the direction of the ray to deal with floating point error
+    let cur_pos = ray_origin + ray_dir * result.t + vec3<f32>(step) * 0.001;
+    // Sample current position
     if any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
     let cur_voxel = vec3<u32>(cur_pos);
-
     result.voxel = vox_read(data.obj_head, cur_voxel);
     if result.voxel[0] != 0u { break; }
-
+    // Sparse marching nonsense
     let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]);
     let pos_wall = neg_wall + (1u << result.voxel[1]);
-    let rounded_pos = vec3<f32>(select(pos_wall, neg_wall, dir_neg));
-    let t_wall = (rounded_pos - ray_origin) * inv_dir;
+    let next_walls = vec3<f32>(select(pos_wall, neg_wall, dir_neg));
+    // Find next position
+    let t_wall = (next_walls - ray_origin) * inv_dir;
     result.t = min(min(t_wall.x, t_wall.y), t_wall.z);
     result.axis = t_wall == vec3<f32>(result.t);
+    result.steps = i;
   }
   return result;
 }
