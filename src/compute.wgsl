@@ -1,5 +1,6 @@
 const WG_SIZE = 8;
 const TREE_HEIGHT = 12u;
+const SENTINEL = -314159.0; 
 
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba8unorm, write>;
@@ -47,12 +48,12 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
   let inv_dir = sign(ray_dir) / abs(ray_dir);
   var ray_origin = data.cam_pos;
-  if any(data.cam_pos < vec3(0.0)) || any(data.cam_pos > vec3(data._obj_bounds)) {
-    let t_start = aabb_intersect(data.cam_pos, inv_dir);
-    if t_start == -314159.0 { return vec4(0.0); }
+  if any(ray_origin < vec3(0.0)) || any(ray_origin > vec3(data._obj_bounds)) {
+    let t_start = aabb_intersect(ray_origin, inv_dir);
+    if t_start == SENTINEL { return vec4(0.0); }
     ray_origin += ray_dir * max(0, t_start);
   } 
-  let hit = dda_vox_v3(ray_origin, ray_dir, inv_dir);
+  let hit = dda_vox_v4(ray_origin, ray_dir, inv_dir);
 
   var base_color: vec3<f32>;
   base_color = vec3(1.0 / f32(hit.steps));
@@ -66,12 +67,15 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
 
 fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r), f32(g), f32(b)) / 255.0; }
 
-fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
+fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   let step = vec3<i32>(sign(inv_dir));
   let dir_neg = step < vec3(0);
+  // var cur_voxel = the voxel we are in rn (safe reliable integer)
+  // var cur_height = the height of the current voxel (for smart marching)
+  // var remainder = the fractional part of the current voxel (for numbers between 0 and 1)
   var result = RayHit();
   for (var i = 0u; i < 500u; i++) {
-    // Compute current position and bump it in the direction of the ray to deal with floating point error
+    // Compute current position and bump it in the direction of the ray to deal with floating point error (I think??)
     let cur_pos = ray_origin + ray_dir * result.t + vec3<f32>(step) * 0.001;
     // Sample current position
     if any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
@@ -113,7 +117,7 @@ fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> f32 {
   let t_entry = max(max(min_t.x, min_t.y), min_t.z);
   let t_exit = min(min(max_t.x, max_t.y), max_t.z);
 
-  if t_entry > t_exit || t_exit < 0.0 { return -314159.0; } // Sentinel value
+  if t_entry > t_exit || t_exit < 0.0 { return SENTINEL; }
   return t_entry;
 }
 
