@@ -1,5 +1,4 @@
 const WG_SIZE = 8;
-const FP_BUMP: f32 = 0.01;
 const TREE_HEIGHT = 12u;
 
 @group(0) @binding(0)
@@ -30,7 +29,7 @@ var<storage> voxels: array<VoxelNode>;
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let resolution = vec2<u32>(textureDimensions(output_tex));
   // We do a little padding so we can fit our pixels into the workgroups
-  if (gid.x >= resolution.x || gid.y >= resolution.y) { return; }
+  if gid.x >= resolution.x || gid.y >= resolution.y { return; }
   // Transform from <0,1> to <-1, 1>, then scale by aspect ratio
   let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
   textureStore(output_tex, vec2<i32>(gid.xy), march_init(uv));
@@ -46,10 +45,9 @@ struct RayHit {
 
 fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
-  let inv_dir = sign(ray_dir) / max(abs(ray_dir), vec3(FP_BUMP));
-
+  let inv_dir = sign(ray_dir) / abs(ray_dir);
   var ray_origin = data.cam_pos;
-  if (any(data.cam_pos < vec3(0.0)) || any(data.cam_pos > vec3(data._obj_bounds))) {
+  if any(data.cam_pos < vec3(0.0)) || any(data.cam_pos > vec3(data._obj_bounds)) {
     let t_start = aabb_intersect(data.cam_pos, inv_dir);
     if t_start == -314159.0 { return vec4(0.0); }
     ray_origin += ray_dir * max(0, t_start);
@@ -58,49 +56,47 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
 
   var base_color: vec3<f32>;
   base_color = vec3(1.0 / f32(hit.steps));
-  let normal_color = vec3(
-    1.0 - f32(hit.axis.z) * 0.2,
-    1.0 + f32(hit.axis.x) * 0.3,
-    1.0 + f32(hit.axis.y) * 0.4,
+  let normal_color = 1.0 + vec3(
+    -f32(hit.axis.z) * 0.2,
+    f32(hit.axis.x) * 0.3,
+    f32(hit.axis.y) * 0.4,
   );
   return vec4(base_color * normal_color, 0);
 }
 
 fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r), f32(g), f32(b)) / 255.0; }
 
-// ray_origin is currently guaranteed to start within bounds
 fn dda_vox_v3(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   let step = vec3<i32>(sign(inv_dir));
   let dir_neg = step < vec3(0);
-  let dir_0 = step == vec3(0);
-  let bump = vec3<f32>(step) * FP_BUMP;
   var result = RayHit();
   for (var i = 0u; i < 500u; i++) {
-    let cur_pos = ray_origin + ray_dir * result.t + bump;
-    if (any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds))) { break; }
+    result.steps = i;
+    let cur_pos = bitcast<vec3<f32>>(bitcast<vec3<i32>>(ray_origin + ray_dir * result.t + 0.0001 * vec3<f32>(step)) + 3 * step);
+    if any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
     let cur_voxel = vec3<u32>(cur_pos);
+
     result.voxel = vox_read(data.obj_head, cur_voxel);
     if result.voxel[0] != 0u { break; }
-    result.steps += 1;
 
     let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]);
     let pos_wall = neg_wall + (1u << result.voxel[1]);
     let rounded_pos = vec3<f32>(select(pos_wall, neg_wall, dir_neg));
-    let t_wall = select(rounded_pos - ray_origin, vec3(10000000.0), dir_0) * inv_dir;
-    result.t = min(min(t_wall.x,t_wall.y), t_wall.z);
+    let t_wall = (rounded_pos - ray_origin) * inv_dir;
+    result.t = min(min(t_wall.x, t_wall.y), t_wall.z);
     result.axis = t_wall == vec3<f32>(result.t);
   }
   return result;
 }
 
-/// Trusts that you submit a cell which fits within the root
+/// Trusts that you submit a valid cell
 fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
   var cur_idx = head;
   var height = TREE_HEIGHT;
   while height != 0 {
     let child = cell >> vec3<u32>(height - 1) & vec3<u32>(1);
     let next_idx = voxels[cur_idx].children[child.z << 2 | child.y << 1 | child.x];
-    if (next_idx == cur_idx) { break; }
+    if next_idx == cur_idx { break; }
     cur_idx = next_idx;
     height -= 1;
   }
