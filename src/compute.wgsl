@@ -54,28 +54,23 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
     ray_origin += ray_dir * max(0, t_start);
   } 
   let hit = dda_vox_v4(ray_origin, ray_dir, inv_dir);
-
-  var base_color: vec3<f32>;
-  base_color = vec3(1.0 / f32(hit.steps + 1));
-  let normal_color = 1.0 + vec3(
-    -f32(hit.axis.z) * 0.2,
-    f32(hit.axis.x) * 0.3,
-    f32(hit.axis.y) * 0.4,
-  );
-  return vec4(base_color * normal_color, 0);
+  let step_color = 1.0 / vec3<f32>(hit.steps);
+  let normal_color = 1.0 + vec3<f32>(hit.axis) * vec3(-0.2, 0.3, 0.4);
+  return vec4(step_color * normal_color, 0);
 }
 
 fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r), f32(g), f32(b)) / 255.0; }
 
 fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
+  var result = RayHit();
   let step = vec3<i32>(sign(inv_dir));
   let dir_neg = step < vec3(0);
-  // var cur_voxel = the voxel we are in rn (safe reliable integer)
-  // var cur_height = the height of the current voxel (for smart marching)
-  // var remainder = the fractional part of the current voxel (for numbers between 0 and 1)
-  var result = RayHit();
-  for (var i = 0u; i < 500u; i++) {
-    // Compute current position and bump it in the direction of the ray to deal with floating point error (I think??)
+
+  // let initial_pos = ray_origin + vec3<f32>(step) * 0.001;
+  // if any(initial_pos < vec3(0.0)) || any(initial_pos >= vec3(data._obj_bounds)) { return result; }
+  // var cur_cell = vec3<u32>
+
+  for (var i = 1u; i < 500u; i++) {
     let cur_pos = ray_origin + ray_dir * result.t + vec3<f32>(step) * 0.001;
     // Sample current position
     if any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
@@ -85,9 +80,9 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
     // Sparse marching nonsense
     let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]);
     let pos_wall = neg_wall + (1u << result.voxel[1]);
-    let next_walls = vec3<f32>(select(pos_wall, neg_wall, dir_neg));
+    let next_walls = select(pos_wall, neg_wall, dir_neg);
     // Find next position
-    let t_wall = (next_walls - ray_origin) * inv_dir;
+    let t_wall = (vec3<f32>(next_walls) - ray_origin) * inv_dir;
     result.t = min(min(t_wall.x, t_wall.y), t_wall.z);
     result.axis = t_wall == vec3<f32>(result.t);
     result.steps = i;
