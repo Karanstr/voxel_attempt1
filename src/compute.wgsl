@@ -56,7 +56,7 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let hit = dda_vox_v4(ray_origin, ray_dir, inv_dir);
 
   var base_color: vec3<f32>;
-  base_color = vec3(1.0 / f32(hit.steps));
+  base_color = vec3(1.0 / f32(hit.steps + 1));
   let normal_color = 1.0 + vec3(
     -f32(hit.axis.z) * 0.2,
     f32(hit.axis.x) * 0.3,
