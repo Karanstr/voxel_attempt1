@@ -56,10 +56,8 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let hit = dda_vox_v4(ray_origin, ray_dir, inv_dir);
   let step_color = 1.0 / vec3<f32>(hit.steps);
   let normal_color = 1.0 + vec3<f32>(hit.axis) * vec3(-0.2, 0.3, 0.4);
-  return vec4(step_color * normal_color, 0);
+  return vec4(step_color * normal_color, 1);
 }
-
-fn make_color(r: u32, g: u32, b: u32) -> vec3<f32> { return vec3(f32(r), f32(g), f32(b)) / 255.0; }
 
 fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   var result = RayHit();
@@ -68,7 +66,7 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
 
   // let initial_pos = ray_origin + vec3<f32>(step) * 0.001;
   // if any(initial_pos < vec3(0.0)) || any(initial_pos >= vec3(data._obj_bounds)) { return result; }
-  // var cur_cell = vec3<u32>
+  // var cur_cell = vec3<u32>(initial_pos);
 
   for (var i = 1u; i < 500u; i++) {
     let cur_pos = ray_origin + ray_dir * result.t + vec3<f32>(step) * 0.001;
