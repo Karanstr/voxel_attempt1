@@ -63,12 +63,12 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
   var result = RayHit();
   let step = vec3<i32>(sign(inv_dir));
   let dir_neg = step < vec3(0);
+  
+  // let cur_voxel = vec3<u32>(ray_origin);
+  // let offset = fract(ray_origin);
 
-  // let initial_pos = ray_origin + vec3<f32>(step) * 0.001;
-  // if any(initial_pos < vec3(0.0)) || any(initial_pos >= vec3(data._obj_bounds)) { return result; }
-  // var cur_cell = vec3<u32>(initial_pos);
-
-  for (var i = 1u; i < 500u; i++) {
+  while (result.steps < 500u) {
+    result.steps += 1;
     let cur_pos = ray_origin + ray_dir * result.t + vec3<f32>(step) * 0.001;
     // Sample current position
     if any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
@@ -78,12 +78,11 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
     // Sparse marching nonsense
     let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]);
     let pos_wall = neg_wall + (1u << result.voxel[1]);
-    let next_walls = select(pos_wall, neg_wall, dir_neg);
+    let next_wall = select(pos_wall, neg_wall, dir_neg);
     // Find next position
-    let t_wall = (vec3<f32>(next_walls) - ray_origin) * inv_dir;
+    let t_wall = (vec3<f32>(next_wall) - ray_origin) * inv_dir;
     result.t = min(min(t_wall.x, t_wall.y), t_wall.z);
     result.axis = t_wall == vec3<f32>(result.t);
-    result.steps = i;
   }
   return result;
 }
