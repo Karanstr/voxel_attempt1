@@ -64,25 +64,31 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
   let step = vec3<i32>(sign(inv_dir));
   let dir_neg = step < vec3(0);
   
-  // let cur_voxel = vec3<u32>(ray_origin);
-  // let offset = fract(ray_origin);
+  var cur_voxel = vec3<u32>(ray_origin);
+  var offset = fract(ray_origin);
 
   while (result.steps < 500u) {
     result.steps += 1;
-    let cur_pos = ray_origin + ray_dir * result.t + vec3<f32>(step) * 0.001;
-    // Sample current position
-    if any(cur_pos < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
-    let cur_voxel = vec3<u32>(cur_pos);
+    if any(cur_voxel >= vec3<u32>(data._obj_bounds)) { break; }
     result.voxel = vox_read(data.obj_head, cur_voxel);
     if result.voxel[0] != 0u { break; }
+
     // Sparse marching nonsense
-    let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]);
-    let pos_wall = neg_wall + (1u << result.voxel[1]);
+    // If we're traveling left and the neg_wall is the outer wall, neg_wall will say 0, the voxel we're stepping through (ignoring height)
+    let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]); 
+    // If we're traveling right and the pos_walls is the outer wall, pos_wall will say _obj_bounds, the voxel we want to be in next
+    let pos_wall = neg_wall + (1u << result.voxel[1]) - 1;
     let next_wall = select(pos_wall, neg_wall, dir_neg);
+
     // Find next position
-    let t_wall = (vec3<f32>(next_wall) - ray_origin) * inv_dir;
+    let distance = select(vec3<f32>(next_wall - cur_voxel) - offset, vec3<f32>(next_wall - cur_voxel) + offset, dir_neg);
+    let t_wall = distance * inv_dir;
     result.t = min(min(t_wall.x, t_wall.y), t_wall.z);
     result.axis = t_wall == vec3<f32>(result.t);
+
+    let traveled = result.t * ray_dir;
+    cur_voxel = select(cur_voxel + vec3<u32>(traveled), cur_voxel - vec3<u32>(traveled), dir_neg);
+    offset = fract(traveled);
   }
   return result;
 }
