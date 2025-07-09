@@ -5,7 +5,7 @@ use winit::window::Window;
 use crate::app::GameData;
 
 // ALWAYS UPDATE CORESPONDING VALUES IN ./render.wgsl and ./compute.wgsl
-const DOWNSCALE: u32 = 2;
+const DOWNSCALE: u32 = 1;
 const WORKGROUP_SQUARE: u32 = 8;
 
 // Remember that vec3's are extended to 16 bytes

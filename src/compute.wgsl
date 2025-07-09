@@ -67,22 +67,23 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
 
   while (result.steps < 500u) {
     result.steps += 1;
-    // Sample current position
-    if any(cur_voxel < vec3<i32>(0)) || any(cur_voxel >= vec3<i32>(data._obj_bounds)) { break; }
+    // Sample position
     result.voxel = vox_read(data.obj_head, cur_voxel);
     if result.voxel[0] != 0u { break; }
-    // Sparse marching nonsense
+    // Sparse marching
     let neg_wall = cur_voxel & vec3(~0i << result.voxel[1]);
     let pos_wall = neg_wall + (1i << result.voxel[1]);
     let next_wall = select(pos_wall, neg_wall, dir_neg);
-    
+    // Next position
     let distance = vec3<f32>(next_wall - cur_voxel) - offset;
     let t_wall = distance * inv_dir;
     let t_next = min(min(t_wall.x, t_wall.y), t_wall.z);
+    // Bookkeeping
     result.axis = t_wall == vec3<f32>(t_next);
     offset += t_next * ray_dir + bump;
     cur_voxel += vec3<i32>(floor(offset));
     offset = fract(offset);
+    if any(cur_voxel < vec3<i32>(0)) || any(cur_voxel >= vec3<i32>(data._obj_bounds)) { break; }
   }
   return result;
 }
@@ -102,7 +103,7 @@ fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
 }
 
 fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> f32 {
-  let just_before = bitcast<vec3<f32>>(bitcast<vec3<u32>>(data._obj_bounds) - 1);
+  let just_before = bitcast<vec3<f32>>(bitcast<vec3<u32>>(data._obj_bounds) - 3);
   let t1 = (vec3(0.0) - ray_origin) * inv_dir;
   let t2 = (just_before - ray_origin) * inv_dir;
   let min_t = min(t1, t2);
