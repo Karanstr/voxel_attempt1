@@ -60,40 +60,39 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
 
 fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   var result = RayHit();
-  let bump = sign(inv_dir) * 0.001;
-  let step = vec3<i32>(sign(inv_dir));
-  let dir_neg = step < vec3(0);
-  var t = 0.0;
+  let bump = sign(inv_dir) * 0.0001;
+  let dir_neg = bump < vec3(0.0);
+  var cur_voxel = vec3<i32>(ray_origin);
+  var offset = fract(ray_origin) + bump;
 
-  // Maybe store our nonsense in i32s so we don't have to cast it all?
   while (result.steps < 500u) {
     result.steps += 1;
-    let cur_pos = ray_origin + ray_dir * t;
     // Sample current position
-    if any(cur_pos + bump < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
-    let cur_voxel = vec3<u32>(cur_pos + bump);
+    if any(cur_voxel < vec3<i32>(0)) || any(cur_voxel >= vec3<i32>(data._obj_bounds)) { break; }
     result.voxel = vox_read(data.obj_head, cur_voxel);
     if result.voxel[0] != 0u { break; }
     // Sparse marching nonsense
-    let neg_wall = cur_voxel & vec3(~0u << result.voxel[1]);
-    let pos_wall = neg_wall + (1u << result.voxel[1]);
+    let neg_wall = cur_voxel & vec3(~0i << result.voxel[1]);
+    let pos_wall = neg_wall + (1i << result.voxel[1]);
     let next_wall = select(pos_wall, neg_wall, dir_neg);
     
-    let distance = vec3<f32>(vec3<i32>(next_wall) - vec3<i32>(cur_pos)) - fract(cur_pos);
+    let distance = vec3<f32>(next_wall - cur_voxel) - offset;
     let t_wall = distance * inv_dir;
     let t_next = min(min(t_wall.x, t_wall.y), t_wall.z);
     result.axis = t_wall == vec3<f32>(t_next);
-    t += t_next;
+    offset += t_next * ray_dir + bump;
+    cur_voxel += vec3<i32>(floor(offset));
+    offset = fract(offset);
   }
   return result;
 }
 
 /// Trusts that you submit a valid cell
-fn vox_read(head: u32, cell: vec3<u32>) -> vec2<u32> {
+fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
   var cur_idx = head;
   var height = TREE_HEIGHT;
   while height != 0 {
-    let child = cell >> vec3<u32>(height - 1) & vec3<u32>(1);
+    let child = cell >> vec3<u32>(height - 1) & vec3<i32>(1);
     let next_idx = voxels[cur_idx].children[child.z << 2 | child.y << 1 | child.x];
     if next_idx == cur_idx { break; }
     cur_idx = next_idx;
