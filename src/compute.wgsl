@@ -60,17 +60,18 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
 
 fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   var result = RayHit();
-  let step_f32 = vec3(sign(inv_dir));
-  let step = vec3<i32>(step_f32);
+  let bump = sign(inv_dir) * 0.001;
+  let step = vec3<i32>(sign(inv_dir));
   let dir_neg = step < vec3(0);
   var t = 0.0;
 
+  // Maybe store our nonsense in i32s so we don't have to cast it all?
   while (result.steps < 500u) {
     result.steps += 1;
     let cur_pos = ray_origin + ray_dir * t;
     // Sample current position
-    if any(cur_pos + step_f32 * 0.001 < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
-    let cur_voxel = vec3<u32>(cur_pos + step_f32 * 0.001);
+    if any(cur_pos + bump < vec3(0.0)) || any(cur_pos >= vec3(data._obj_bounds)) { break; }
+    let cur_voxel = vec3<u32>(cur_pos + bump);
     result.voxel = vox_read(data.obj_head, cur_voxel);
     if result.voxel[0] != 0u { break; }
     // Sparse marching nonsense
@@ -78,8 +79,7 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
     let pos_wall = neg_wall + (1u << result.voxel[1]);
     let next_wall = select(pos_wall, neg_wall, dir_neg);
     
-    // let distance = vec3<f32>(next_wall - vec3<u32>(cur_pos)) - fract(cur_pos);
-    let distance = vec3<f32>(next_wall) - cur_pos;
+    let distance = vec3<f32>(vec3<i32>(next_wall) - vec3<i32>(cur_pos)) - fract(cur_pos);
     let t_wall = distance * inv_dir;
     let t_next = min(min(t_wall.x, t_wall.y), t_wall.z);
     result.axis = t_wall == vec3<f32>(t_next);
