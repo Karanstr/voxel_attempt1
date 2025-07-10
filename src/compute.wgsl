@@ -44,71 +44,84 @@ struct RayHit {
   steps: u32,
 }
 
+struct Position {
+  cell: vec3<i32>,
+  offset: vec3<f32>,
+}
+fn update_pos(pos: ptr<function, Position>, delta: vec3<f32>, bump: vec3<f32>) {
+  (*pos).cell += vec3<i32>(floor(delta));
+  (*pos).offset += fract(delta) + bump;
+  (*pos).cell += vec3<i32>(floor((*pos).offset));
+  (*pos).offset = fract((*pos).offset);
+}
+
+
+// Precompute offset and cur_voxel (or pass flag saying we're starting outside of the region and have to do that work for us)
 fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
   let inv_dir = sign(ray_dir) / abs(ray_dir);
-  var ray_origin = data.cam_pos;
-  if any(ray_origin < vec3(0.0)) || any(ray_origin > vec3(data._obj_bounds)) {
-    let t_start = aabb_intersect(ray_origin, inv_dir);
+  let bump = sign(ray_dir) * 0.001;
+  var pos = Position(vec3<i32>(floor(data.cam_pos)), fract(data.cam_pos));
+  var delta = vec3(0.0);
+  if any(bitcast<vec3<u32>>(pos.cell) >= vec3<u32>(data._obj_bounds)) {
+    let t_start = aabb_intersect(data.cam_pos, inv_dir);
     if t_start == SENTINEL { return vec4(0.0); }
-    ray_origin += ray_dir * max(0, t_start);
-  } 
-  let hit = dda_vox_v4(ray_origin, ray_dir, inv_dir);
+    delta = ray_dir * max(0, t_start);
+  }
+  update_pos(&pos, delta, bump);
+  let hit = dda_vox_v4(&pos, ray_dir, inv_dir, bump);
   let step_color = 1.0 / vec3<f32>(hit.steps);
   let normal_color = 1.0 + vec3<f32>(hit.axis) * vec3(-0.2, 0.3, 0.4);
   return vec4(step_color * normal_color, 1);
 }
 
-fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
-  var result = RayHit();
-  let bump = sign(inv_dir) * 0.001;
+fn dda_vox_v4(initial_pos: ptr<function, Position>, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bump:vec3<f32>) -> RayHit {
   let dir_neg = bump < vec3(0.0);
-  var cur_voxel = vec3<i32>(ray_origin);
-  var offset = fract(ray_origin) + bump;
+  var result = RayHit();
+  var pos = *initial_pos;
 
+  result.voxel = vox_read(data.obj_head, TREE_HEIGHT, pos.cell);
+  if result.voxel[0] != 0 { return result; }
   while (result.steps < STEP_COUNT) {
     result.steps += 1;
-    // Sample position
-    result.voxel = vox_read(data.obj_head, cur_voxel);
-    if result.voxel[0] != 0u { break; }
     // Sparse marching
-    let neg_wall = cur_voxel & vec3(~0i << result.voxel[1]);
+    let neg_wall = pos.cell & vec3(~0i << result.voxel[1]);
     let pos_wall = neg_wall + (1i << result.voxel[1]);
     let next_wall = select(pos_wall, neg_wall, dir_neg);
     // Next position
-    let distance = vec3<f32>(next_wall - cur_voxel) - offset;
-    let t_wall = distance * inv_dir;
+    let t_wall = (vec3<f32>(next_wall - pos.cell) - pos.offset) * inv_dir;
     let t_next = min(min(t_wall.x, t_wall.y), t_wall.z);
     // Bookkeeping
-    result.axis = t_wall == vec3<f32>(t_next);
-    let offset_next = t_next * ray_dir;
-    cur_voxel += vec3<i32>(floor(offset_next));
-    offset += fract(offset_next) + bump;
-    cur_voxel += vec3<i32>(floor(offset));
-    offset = fract(offset);
-    if any(cur_voxel < vec3<i32>(0)) || any(cur_voxel >= vec3<i32>(data._obj_bounds)) { break; }
+    let delta = t_next * ray_dir;
+    update_pos(&pos, delta, bump);
+    result.axis = t_wall == vec3(t_next);
+    // Sample position
+    // We cast pos.cell to u32s to avoid the < 0 conditional via underflow
+    if any(bitcast<vec3<u32>>(pos.cell) >= vec3<u32>(data._obj_bounds)) { break; }
+    result.voxel = vox_read(data.obj_head, TREE_HEIGHT, pos.cell);
+    if result.voxel[0] != 0u { break; }
   }
   return result;
 }
 
 /// Trusts that you submit a valid cell
-fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
+fn vox_read(head: u32, head_height: u32, cell: vec3<i32>) -> vec2<u32> {
   var cur_idx = head;
-  var height = TREE_HEIGHT;
+  var height = head_height;
   while height != 0 {
-    let child = cell >> vec3<u32>(height - 1) & vec3<i32>(1);
-    let next_idx = voxels[cur_idx].children[child.z << 2 | child.y << 1 | child.x];
-    if next_idx == cur_idx { break; }
-    cur_idx = next_idx;
     height -= 1;
+    let child = cell >> vec3<u32>(height) & vec3<i32>(1);
+    let next_idx = voxels[cur_idx].children[child.z << 2 | child.y << 1 | child.x];
+    if next_idx == cur_idx { return vec2(cur_idx, height + 1); }
+    cur_idx = next_idx;
   }
   return vec2<u32>(cur_idx, height);
 }
 
 fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> f32 {
-  let just_before = bitcast<vec3<f32>>(bitcast<vec3<u32>>(data._obj_bounds) - 3);
+  let just_before = bitcast<vec3<f32>>(bitcast<vec3<u32>>(data._obj_bounds) - 7);
   let t1 = (vec3(0.0) - ray_origin) * inv_dir;
-  let t2 = (just_before - ray_origin) * inv_dir;
+  let t2 = (data._obj_bounds - ray_origin) * inv_dir;
   let min_t = min(t1, t2);
   let max_t = max(t1, t2);
   let t_entry = max(max(min_t.x, min_t.y), min_t.z);

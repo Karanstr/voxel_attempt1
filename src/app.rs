@@ -30,7 +30,8 @@ impl ObjectData {
       for z in 0 .. size {
         let sample = noise.get_noise_2d(x as f32, z as f32) * 0.05;
         if sample > 0.0 {
-          let path = Zorder3d::path_from(UVec3::new(x, (sample * size as f32) as u32, z), height);
+          let y = (sample * size as f32) as u32;
+          let path = Zorder3d::path_from(UVec3::new(x, y, z), height);
           head = sdg.set_node(head, &path, 1);
         }
       }
