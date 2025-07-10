@@ -13,11 +13,15 @@ const WORKGROUP_SQUARE: u32 = 8;
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Data {
     obj_head: u32,
-    obj_bounds: f32,
+    obj_bounds: u32,
     cam_aspect: f32,
     cam_tan_fov: f32,
-    cam_pos: [f32; 3],
+
+    cam_cell: [i32; 3],
+    padding1: f32,
+    cam_offset: [f32; 3],
     padding2: f32,
+
     cam_forward: [f32; 3],
     padding3: f32,
     cam_right: [f32; 3],
@@ -28,7 +32,7 @@ struct Data {
 impl Data {
     fn new(
       obj_head:u32,
-      obj_bounds:f32,
+      obj_bounds:u32,
       camera_pos:glam::Vec3,
       basis: [glam::Vec3; 3],
       aspect_ratio: f32,
@@ -39,7 +43,9 @@ impl Data {
       obj_bounds,
       cam_aspect: aspect_ratio,
       cam_tan_fov: (fov / 2.).tan(),
-      cam_pos: camera_pos.into(),
+      cam_cell: camera_pos.floor().as_ivec3().into(),
+      padding1: 0.,
+      cam_offset: camera_pos.fract_gl().into(),
       padding2: 0.,
       cam_forward: basis[2].into(),
       padding3: 0.,
@@ -146,7 +152,7 @@ impl<'window> WgpuCtx<'window> {
     // Stores Data {..}
     let data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Data Buffer"),
-      size: 80,
+      size: 96,
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });

@@ -15,12 +15,12 @@ use fastnoise_lite::{FastNoiseLite, NoiseType};
 
 pub struct ObjectData {
   pub head: Index,
-  pub bounds: f32,
+  pub bounds: u32,
 }
 impl ObjectData {
   pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
-    let height = 11;
+    let height = 12;
     let size = 2u32.pow(height);
     let mut noise = FastNoiseLite::new();
     noise.set_seed(None);
@@ -39,7 +39,7 @@ impl ObjectData {
 
     ObjectData {
       head,
-      bounds: size as f32
+      bounds: size
     }
   }
 }

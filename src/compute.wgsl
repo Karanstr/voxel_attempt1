@@ -1,5 +1,5 @@
 const WG_SIZE = 8;
-const TREE_HEIGHT = 11u;
+const TREE_HEIGHT = 12u;
 const SENTINEL = -314159.0;
 const STEP_COUNT = 1000u;
 
@@ -8,11 +8,15 @@ var output_tex: texture_storage_2d<rgba8unorm, write>;
 
 struct Data {
   obj_head: u32,
-  _obj_bounds: f32,
+  obj_bounds: u32,
   aspect_ratio: f32,
   tan_fov: f32,
-  cam_pos: vec3<f32>,
+
+  cam_cell: vec3<i32>,
   // padding: f32
+  cam_offset: vec3<f32>,
+  // padding: f32
+
   cam_forward: vec3<f32>,
   // padding: f32
   cam_right: vec3<f32>,
@@ -30,7 +34,7 @@ var<storage> voxels: array<VoxelNode>;
 @compute @workgroup_size(WG_SIZE, WG_SIZE)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let resolution = vec2<u32>(textureDimensions(output_tex));
-  // We do a little padding so we can fit our pixels into the workgroups
+  // We do a little padding so we can fit into the workgroups correctly
   if gid.x >= resolution.x || gid.y >= resolution.y { return; }
   // Transform from <0,1> to <-1, 1>, then scale by aspect ratio
   let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
@@ -56,18 +60,17 @@ fn update_pos(pos: ptr<function, Position>, delta: vec3<f32>, bump: vec3<f32>) {
 }
 
 
-// Precompute offset and cur_voxel (or pass flag saying we're starting outside of the region and have to do that work for us)
 fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
   let inv_dir = sign(ray_dir) / abs(ray_dir);
   let bump = sign(ray_dir) * 0.001;
-  var pos = Position(vec3<i32>(floor(data.cam_pos)), fract(data.cam_pos));
   var delta = vec3(0.0);
-  if any(bitcast<vec3<u32>>(pos.cell) >= vec3<u32>(data._obj_bounds)) {
-    let t_start = aabb_intersect(data.cam_pos, inv_dir);
+  if any(bitcast<vec3<u32>>(data.cam_cell) >= vec3(data.obj_bounds)) {
+    let t_start = aabb_intersect(vec3<f32>(data.cam_cell) + data.cam_offset, inv_dir);
     if t_start == SENTINEL { return vec4(0.0); }
     delta = ray_dir * max(0, t_start);
   }
+  var pos = Position(data.cam_cell, data.cam_offset);
   update_pos(&pos, delta, bump);
   let hit = dda_vox_v4(&pos, ray_dir, inv_dir, bump);
   let step_color = 1.0 / vec3<f32>(hit.steps);
@@ -91,13 +94,11 @@ fn dda_vox_v4(initial_pos: ptr<function, Position>, ray_dir: vec3<f32>, inv_dir:
     // Next position
     let t_wall = (vec3<f32>(next_wall - pos.cell) - pos.offset) * inv_dir;
     let t_next = min(min(t_wall.x, t_wall.y), t_wall.z);
-    // Bookkeeping
-    let delta = t_next * ray_dir;
-    update_pos(&pos, delta, bump);
+    update_pos(&pos, t_next * ray_dir, bump);
     result.axis = t_wall == vec3(t_next);
-    // Sample position
-    // We cast pos.cell to u32s to avoid the < 0 conditional via underflow
-    if any(bitcast<vec3<u32>>(pos.cell) >= vec3<u32>(data._obj_bounds)) { break; }
+    // Sample
+    // We bitcast pos.cell to u32s to avoid the < 0 branching via underflow
+    if any(bitcast<vec3<u32>>(pos.cell) >= vec3(data.obj_bounds)) { break; }
     result.voxel = vox_read(data.obj_head, TREE_HEIGHT, pos.cell);
     if result.voxel[0] != 0u { break; }
   }
@@ -119,9 +120,8 @@ fn vox_read(head: u32, head_height: u32, cell: vec3<i32>) -> vec2<u32> {
 }
 
 fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> f32 {
-  let just_before = bitcast<vec3<f32>>(bitcast<vec3<u32>>(data._obj_bounds) - 7);
   let t1 = (vec3(0.0) - ray_origin) * inv_dir;
-  let t2 = (data._obj_bounds - ray_origin) * inv_dir;
+  let t2 = (vec3<f32>(data.obj_bounds) - ray_origin) * inv_dir;
   let min_t = min(t1, t2);
   let max_t = max(t1, t2);
   let t_entry = max(max(min_t.x, min_t.y), min_t.z);
