@@ -1,5 +1,5 @@
 const WG_SIZE = 8;
-const TREE_HEIGHT = 12u;
+const TREE_HEIGHT = 11u;
 const SENTINEL = -314159.0;
 const STEP_COUNT = 1000u;
 
