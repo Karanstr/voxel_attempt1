@@ -1,6 +1,7 @@
 const WG_SIZE = 8;
-const TREE_HEIGHT = 12u;
-const SENTINEL = -314159.0; 
+const TREE_HEIGHT = 11u;
+const SENTINEL = -314159.0;
+const STEP_COUNT = 1000u;
 
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba8unorm, write>;
@@ -60,12 +61,12 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
 
 fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> RayHit {
   var result = RayHit();
-  let bump = sign(inv_dir) * 0.0001;
+  let bump = sign(inv_dir) * 0.001;
   let dir_neg = bump < vec3(0.0);
   var cur_voxel = vec3<i32>(ray_origin);
   var offset = fract(ray_origin) + bump;
 
-  while (result.steps < 500u) {
+  while (result.steps < STEP_COUNT) {
     result.steps += 1;
     // Sample position
     result.voxel = vox_read(data.obj_head, cur_voxel);
@@ -80,7 +81,9 @@ fn dda_vox_v4(ray_origin: vec3<f32>, ray_dir: vec3<f32>, inv_dir: vec3<f32>) -> 
     let t_next = min(min(t_wall.x, t_wall.y), t_wall.z);
     // Bookkeeping
     result.axis = t_wall == vec3<f32>(t_next);
-    offset += t_next * ray_dir + bump;
+    let offset_next = t_next * ray_dir;
+    cur_voxel += vec3<i32>(floor(offset_next));
+    offset += fract(offset_next) + bump;
     cur_voxel += vec3<i32>(floor(offset));
     offset = fract(offset);
     if any(cur_voxel < vec3<i32>(0)) || any(cur_voxel >= vec3<i32>(data._obj_bounds)) { break; }

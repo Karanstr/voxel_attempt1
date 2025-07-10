@@ -20,7 +20,7 @@ pub struct ObjectData {
 impl ObjectData {
   pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
-    let height = 12;
+    let height = 11;
     let size = 2u32.pow(height);
     let mut noise = FastNoiseLite::new();
     noise.set_seed(None);
@@ -28,7 +28,7 @@ impl ObjectData {
     noise.set_frequency(Some(0.0027));
     for x in 0 .. size {
       for z in 0 .. size {
-        let sample = noise.get_noise_2d(x as f32, z as f32) * 0.1;
+        let sample = noise.get_noise_2d(x as f32, z as f32) * 0.05;
         if sample > 0.0 {
           let path = Zorder3d::path_from(UVec3::new(x, (sample * size as f32) as u32, z), height);
           head = sdg.set_node(head, &path, 1);
@@ -235,10 +235,10 @@ impl<'window> App<'window> {
         displacement -= Vec3::Y;
       }
       if self.keys_pressed.contains(&KeyCode::Equal) {
-        self.game_data.speed *= 1.001;
+        self.game_data.speed *= 1.003;
       }
       if self.keys_pressed.contains(&KeyCode::Minus) {
-        self.game_data.speed /= 1.001;
+        self.game_data.speed /= 1.003;
       }
       self.game_data.camera.position += displacement.normalize_or_zero() * camera_speed;
     }
