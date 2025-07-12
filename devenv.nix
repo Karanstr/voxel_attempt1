@@ -9,7 +9,7 @@ let
 in {
   packages = dyn_libs ++ [ 
     pkgs.rust-analyzer
-    pkgs.linuxPackages_latest.perf 
+    pkgs.linuxPackages_latest.perf
   ];
 
   languages.rust = {
@@ -21,5 +21,7 @@ in {
   };
 
   # Throws path into the env for nvim lsp
-  env.RUST_ANALYZER = "${pkgs.rust-analyzer}/bin/rust-analyzer";
+  env = {
+    RUST_ANALYZER = "${pkgs.rust-analyzer}/bin/rust-analyzer";
+  };
 }
