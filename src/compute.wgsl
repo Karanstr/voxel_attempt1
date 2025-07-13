@@ -59,7 +59,6 @@ fn update_pos(pos: ptr<function, Position>, delta: vec3<f32>, bump: vec3<f32>) {
   (*pos).offset = fract((*pos).offset);
 }
 
-
 fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
   let inv_dir = sign(ray_dir) / abs(ray_dir);
@@ -72,18 +71,18 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   }
   var pos = Position(data.cam_cell, data.cam_offset);
   update_pos(&pos, delta, bump);
-  let hit = dda_vox_v4(&pos, ray_dir, inv_dir, bump);
+  let hit = dda_vox_v4(pos, ray_dir, inv_dir, bump);
   let step_color = 1.0 / vec3<f32>(hit.steps);
   let normal_color = 1.0 + vec3<f32>(hit.axis) * vec3(-0.2, 0.3, 0.4);
   return vec4(step_color * normal_color, 1);
 }
 
-fn dda_vox_v4(initial_pos: ptr<function, Position>, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bump:vec3<f32>) -> RayHit {
+fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bump:vec3<f32>) -> RayHit {
   let dir_neg = bump < vec3(0.0);
   var result = RayHit();
-  var pos = *initial_pos;
+  var pos = initial_pos;
 
-  result.voxel = vox_read(data.obj_head, TREE_HEIGHT, pos.cell);
+  result.voxel = vox_read(data.obj_head, pos.cell);
   if result.voxel[0] != 0 { return result; }
   while (result.steps < STEP_COUNT) {
     result.steps += 1;
@@ -99,16 +98,16 @@ fn dda_vox_v4(initial_pos: ptr<function, Position>, ray_dir: vec3<f32>, inv_dir:
     // Sample
     // We bitcast pos.cell to u32s to avoid the < 0 branching via underflow
     if any(bitcast<vec3<u32>>(pos.cell) >= vec3(data.obj_bounds)) { break; }
-    result.voxel = vox_read(data.obj_head, TREE_HEIGHT, pos.cell);
+    result.voxel = vox_read(data.obj_head, pos.cell);
     if result.voxel[0] != 0u { break; }
   }
   return result;
 }
 
 /// Trusts that you submit a valid cell
-fn vox_read(head: u32, head_height: u32, cell: vec3<i32>) -> vec2<u32> {
+fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
   var cur_idx = head;
-  var height = head_height;
+  var height = TREE_HEIGHT;
   while height != 0 {
     height -= 1;
     let child = cell >> vec3<u32>(height) & vec3<i32>(1);
