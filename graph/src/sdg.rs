@@ -1,4 +1,4 @@
-use std::collections::{/*HashMap,*/ VecDeque};
+use std::collections::VecDeque;
 use ahash::AHashMap;
 use glam::UVec3;
 // use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -51,14 +51,28 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     for step in 0 .. path.len() { trail.push(self.child(trail[step], path[step])) }
     trail 
   }
+  
+  fn get_ref(&self, idx: Index) -> u32 { self.ref_count[idx as usize] }
 
   fn add_ref(&mut self, idx: Index) {
     if idx as usize >= self.ref_count.len() { self.ref_count.resize(idx as usize + 1, 0) }
     self.ref_count[idx as usize] += 1;
   }
 
-  fn get_ref(&self, idx: Index) -> u32 { self.ref_count[idx as usize] }
-  
+  fn decrement_ref(&mut self, idx:Index) {
+    let mut queue = vec![idx];
+    while let Some(cur_idx) = queue.pop() {
+      self.ref_count[cur_idx as usize] -= 1;
+      if self.get_ref(cur_idx) == 0 && !self.is_leaf(cur_idx) {
+        let old_node = self.nodes.free(cur_idx as usize).unwrap();
+        self.index_lookup.remove(&old_node);
+        for child in T::Children::all() {
+          queue.push(old_node.get(child));
+        }
+      }
+    }
+  }
+
   pub fn add_leaf(&mut self) -> Index {
     let idx = self.nodes.next_allocated() as Index;
     let leaf = T::new(&vec![idx; T::Children::COUNT][..]);
@@ -104,22 +118,6 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     new_head
   }
 
-  fn decrement_ref(&mut self, idx:Index) {
-    let mut queue = vec![idx];
-    while let Some(cur_idx) = queue.pop() {
-      self.ref_count[cur_idx as usize] -= 1;
-      if self.get_ref(cur_idx) == 0 && !self.is_leaf(cur_idx) {
-        let old_node = self.nodes.free(cur_idx as usize).unwrap();
-        self.index_lookup.remove(&old_node);
-        for child in T::Children::all() {
-          queue.push(old_node.get(child));
-        }
-      }
-    }
-  }
-  
-  pub fn get_root(&mut self, idx:Index) -> Index { self.add_ref(idx); idx }
-
   fn find_index(&self, node:&T) -> Option<Index> { self.index_lookup.get(node).copied() }
   
   fn is_leaf(&self, idx:Index) -> bool { self.leaves.binary_search(&idx).is_ok() }
@@ -130,11 +128,12 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
 
   pub fn descend(&self, head:Index, path:&[T::Children]) -> Index { *self.get_trail(head, path).last().unwrap() }
 
+  pub fn get_root(&mut self, idx:Index) -> Index { self.add_ref(idx); idx }
 
 }
 
 
-// Changing this system'll take too long atm, I want to do other stuff maybe
+// Changing this system'll take too long atm, I want to do other stuff
 // #[derive(Serialize, Deserialize)]
 // struct TreeStorage<N : Node> {
 //   head: Index,
