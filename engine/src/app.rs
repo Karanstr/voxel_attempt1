@@ -1,4 +1,4 @@
-use crate::graph::prelude::*;
+use sdg::prelude::*;
 use crate::wgpu_ctx::WgpuCtx;
 use crate::camera::Camera;
 use std::sync::Arc;

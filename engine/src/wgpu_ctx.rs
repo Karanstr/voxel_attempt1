@@ -1,6 +1,6 @@
 use std::{sync::Arc, u32};
 #[allow(unused)]
-use crate::graph::prelude::{BasicNode3d, Node, SparseDirectedGraph};
+use sdg::prelude::{BasicNode3d, Node, SparseDirectedGraph};
 use winit::window::Window;
 use crate::app::GameData;
 
@@ -12,32 +12,32 @@ const WORKGROUP_SQUARE: u32 = 8;
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Data {
-    obj_head: u32,
-    obj_bounds: u32,
-    cam_aspect: f32,
-    cam_tan_fov: f32,
+  obj_head: u32,
+  obj_bounds: u32,
+  cam_aspect: f32,
+  cam_tan_fov: f32,
 
-    cam_cell: [i32; 3],
-    padding1: f32,
-    cam_offset: [f32; 3],
-    padding2: f32,
+  cam_cell: [i32; 3],
+  padding1: f32,
+  cam_offset: [f32; 3],
+  padding2: f32,
 
-    cam_forward: [f32; 3],
-    padding3: f32,
-    cam_right: [f32; 3],
-    padding4: f32,
-    cam_up: [f32; 3],
-    padding5: f32,
+  cam_forward: [f32; 3],
+  padding3: f32,
+  cam_right: [f32; 3],
+  padding4: f32,
+  cam_up: [f32; 3],
+  padding5: f32,
 }
 impl Data {
-    fn new(
-      obj_head:u32,
-      obj_bounds:u32,
-      camera_pos:glam::Vec3,
-      basis: [glam::Vec3; 3],
-      aspect_ratio: f32,
-      fov: f32,
-    ) -> Self {
+  fn new(
+    obj_head: u32,
+    obj_bounds: u32,
+    camera_pos: glam::Vec3,
+    basis: [glam::Vec3; 3],
+    aspect_ratio: f32,
+    fov: f32,
+  ) -> Self {
     Self {
       obj_head,
       obj_bounds,
@@ -78,16 +78,16 @@ pub struct WgpuCtx<'window> {
 impl<'window> WgpuCtx<'window> {
 
   fn new_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
-      device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Storage Texture"),
-        size: wgpu::Extent3d { width: width / DOWNSCALE, height: height / DOWNSCALE, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-      })
+    device.create_texture(&wgpu::TextureDescriptor {
+      label: Some("Storage Texture"),
+      size: wgpu::Extent3d { width: width / DOWNSCALE, height: height / DOWNSCALE, depth_or_array_layers: 1 },
+      mip_level_count: 1,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: wgpu::TextureFormat::Rgba8Unorm,
+      usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+      view_formats: &[],
+    })
   }
 
   async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
@@ -104,7 +104,7 @@ impl<'window> WgpuCtx<'window> {
     let height = size.height.max(1);
     let surface_config = surface.get_default_config(&adapter, width, height).unwrap();
     surface.configure(&device, &surface_config);
-    
+
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
     let compute_texture = Self::new_texture(&device, width, height);
     let compute_view = compute_texture.create_view(&Default::default());
@@ -146,7 +146,7 @@ impl<'window> WgpuCtx<'window> {
           },
           count: None,
         },
-      ],
+        ],
     });
 
     // Stores Data {..}
@@ -328,7 +328,7 @@ impl<'window> WgpuCtx<'window> {
     }).collect();
     self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&safe_data));
   }
-  
+
   pub fn draw(&mut self, game_data: &GameData) {
     let (width, height) = (self.surface_config.width, self.surface_config.height);
     let frame = self.surface.get_current_texture().unwrap();

@@ -7,7 +7,6 @@ use winit::event_loop::{ControlFlow, EventLoop};
 mod app;
 mod wgpu_ctx;
 mod camera;
-mod graph;
 
 fn main() {
   // let time = Instant::now();

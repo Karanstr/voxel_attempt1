@@ -1354,6 +1354,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdg"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "glam",
+ "lilypads",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1644,14 +1655,11 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voxel_game"
 version = "0.1.0"
 dependencies = [
- "ahash",
  "bytemuck",
  "fastnoise-lite",
  "glam",
- "lilypads",
  "pollster",
- "serde",
- "serde_json",
+ "sdg",
  "wgpu",
  "winit",
 ]

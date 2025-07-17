@@ -1,7 +1,6 @@
 const WG_SIZE = 8;
 const TREE_HEIGHT = 11u;
 const SENTINEL = -314159.0;
-const STEP_COUNT = 1000u;
 
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba8unorm, write>;
@@ -37,7 +36,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // We do a little padding so we can fit into the workgroups correctly
   if gid.x >= resolution.x || gid.y >= resolution.y { return; }
   // Transform from <0,1> to <-1, 1>, then scale by aspect ratio
-  let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2<f32>(data.aspect_ratio, 1.0);
+  let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2(data.aspect_ratio, 1.0);
   textureStore(output_tex, vec2<i32>(gid.xy), march_init(uv));
 }
 
@@ -45,6 +44,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 struct RayHit {
   axis: vec3<bool>,
   voxel: vec2<u32>,
+  pos: Position,
   steps: u32,
 }
 
@@ -72,6 +72,8 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   var pos = Position(data.cam_cell, data.cam_offset);
   update_pos(&pos, delta, bump);
   let hit = dda_vox_v4(pos, ray_dir, inv_dir, bump);
+  if hit.voxel[0] == 0 { return vec4(0.0); }
+  // let ambient_occlusion = select(1, 0.5, );
   let step_color = 1.0 / vec3<f32>(hit.steps);
   let normal_color = 1.0 + vec3<f32>(hit.axis) * vec3(-0.2, 0.3, 0.4);
   return vec4(step_color * normal_color, 1);
@@ -83,8 +85,8 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
   var pos = initial_pos;
 
   result.voxel = vox_read(data.obj_head, pos.cell);
-  if result.voxel[0] != 0 { return result; }
-  while (result.steps < STEP_COUNT) {
+  if result.voxel[0] != 0 { result.pos = pos; return result; }
+  loop {
     result.steps += 1;
     // Sparse marching
     let neg_wall = pos.cell & vec3(~0i << result.voxel[1]);
@@ -101,6 +103,7 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
     result.voxel = vox_read(data.obj_head, pos.cell);
     if result.voxel[0] != 0u { break; }
   }
+  result.pos = pos;
   return result;
 }
 
@@ -108,6 +111,7 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
 fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
   var cur_idx = head;
   var height = TREE_HEIGHT;
+  var depth = 0;
   while height != 0 {
     height -= 1;
     let child = cell >> vec3<u32>(height) & vec3<i32>(1);
