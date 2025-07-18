@@ -690,9 +690,9 @@ dependencies = [
 
 [[package]]
 name = "lilypads"
-version = "0.9.0"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01b0b4e304cfafabccfdce677ca80c48785eee9b6f48bceafd0249586075ab53"
+checksum = "be6700ff9e143766bc878c7c13404690ff3cce4d10be778da482330895afc59c"
 dependencies = [
  "serde",
 ]

@@ -59,7 +59,7 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
     self.ref_count[idx as usize] += 1;
   }
 
-  fn decrement_ref(&mut self, idx:Index) {
+  fn decrement_ref(&mut self, idx: Index) {
     let mut queue = vec![idx];
     while let Some(cur_idx) = queue.pop() {
       self.ref_count[cur_idx as usize] -= 1;
