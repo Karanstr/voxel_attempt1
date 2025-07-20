@@ -101,7 +101,7 @@ impl<'window> WgpuCtx<'window> {
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
-    let compute_shader = device.create_shader_module(wgpu::include_wgsl!("wgsl/compute.wgsl"));
+    let compute_shader = device.create_shader_module(wgpu::include_wgsl!("shaders/compute.wgsl"));
     let compute_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       label: Some("Compute BGL"),
       entries: &[
@@ -169,7 +169,7 @@ impl<'window> WgpuCtx<'window> {
       label: Some("Compute Pipeline")
     });
 
-    let render_module = device.create_shader_module(wgpu::include_wgsl!("wgsl/render.wgsl"));
+    let render_module = device.create_shader_module(wgpu::include_wgsl!("shaders/render.wgsl"));
     let render_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       label: Some("Render BGL"),
       entries: &[
