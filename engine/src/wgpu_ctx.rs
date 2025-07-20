@@ -1,12 +1,13 @@
 use std::{sync::Arc, u32};
+use glam::UVec2;
 #[allow(unused)]
 use sdg::prelude::{BasicNode3d, Node, SparseDirectedGraph};
 use winit::window::Window;
-use crate::app::GameData;
+use crate::{app::GameData, camera::Camera};
 
 // ALWAYS UPDATE CORESPONDING VALUES IN ./render.wgsl and ./compute.wgsl
 const DOWNSCALE: u32 = 1;
-const WORKGROUP_SQUARE: u32 = 8;
+const WORKGROUP: u32 = 8;
 
 // Remember that vec3's are extended to 16 bytes
 #[repr(C)]
@@ -30,28 +31,21 @@ struct Data {
   padding5: f32,
 }
 impl Data {
-  fn new(
-    obj_head: u32,
-    obj_bounds: u32,
-    camera_pos: glam::Vec3,
-    basis: [glam::Vec3; 3],
-    aspect_ratio: f32,
-    fov: f32,
-  ) -> Self {
+  fn new(obj_head: u32, obj_bounds: u32, camera: &Camera) -> Self {
     Self {
       obj_head,
       obj_bounds,
-      cam_aspect: aspect_ratio,
-      cam_tan_fov: (fov / 2.).tan(),
-      cam_cell: camera_pos.floor().as_ivec3().into(),
+      cam_aspect: camera.aspect_ratio,
+      cam_tan_fov: (camera.fov / 2.).tan(),
+      cam_cell: camera.position.floor().as_ivec3().into(),
       padding1: 0.,
-      cam_offset: camera_pos.fract_gl().into(),
+      cam_offset: camera.position.fract_gl().into(),
       padding2: 0.,
-      cam_forward: basis[2].into(),
+      cam_forward: camera.basis()[2].into(),
       padding3: 0.,
-      cam_right: basis[0].into(),
+      cam_right: camera.basis()[0].into(),
       padding4: 0.,
-      cam_up: basis[1].into(),
+      cam_up: camera.basis()[1].into(),
       padding5: 0.,
     }
   } 
@@ -62,17 +56,18 @@ pub struct WgpuCtx<'window> {
   surface_config: wgpu::SurfaceConfiguration,
   device: wgpu::Device,
   queue: wgpu::Queue,
+  sampler: wgpu::Sampler,
 
   data_buffer: wgpu::Buffer,
   voxel_buffer: wgpu::Buffer,
 
   compute_bgl: wgpu::BindGroupLayout,
   compute_pipeline: wgpu::ComputePipeline,
-  compute_bind_group: wgpu::BindGroup,
+  compute_bind_group: Option<wgpu::BindGroup>,
+
   render_bgl: wgpu::BindGroupLayout,
   render_pipeline: wgpu::RenderPipeline,
-  render_bind_group: wgpu::BindGroup,
-  sampler: wgpu::Sampler,
+  render_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl<'window> WgpuCtx<'window> {
@@ -90,26 +85,23 @@ impl<'window> WgpuCtx<'window> {
     })
   }
 
-  async fn new_async(window: Arc<Window>) -> WgpuCtx<'window> {
+  pub fn new(window: Arc<Window>) -> WgpuCtx<'window> {
     let instance = wgpu::Instance::default();
     let surface = instance.create_surface(Arc::clone(&window)).unwrap();
-    let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
+
+    let adapter = pollster::block_on( instance.request_adapter(&wgpu::RequestAdapterOptions {
       compatible_surface: Some(&surface),
       ..Default::default()
-    }).await.unwrap();
-    let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+    })).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
 
     let size = window.inner_size();
-    let width = size.width.max(1);
-    let height = size.height.max(1);
-    let surface_config = surface.get_default_config(&adapter, width, height).unwrap();
+    let surface_config = surface.get_default_config(&adapter, size.width, size.height).unwrap();
     surface.configure(&device, &surface_config);
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
-    let compute_texture = Self::new_texture(&device, width, height);
-    let compute_view = compute_texture.create_view(&Default::default());
 
-    let compute_shader = device.create_shader_module(wgpu::include_wgsl!("compute.wgsl"));
+    let compute_shader = device.create_shader_module(wgpu::include_wgsl!("wgsl/compute.wgsl"));
     let compute_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       label: Some("Compute BGL"),
       entries: &[
@@ -152,37 +144,18 @@ impl<'window> WgpuCtx<'window> {
     // Stores Data {..}
     let data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Data Buffer"),
-      size: 96,
+      size: 96, // bytes
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
     // Stores BasicNode {...}s
     let voxel_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Voxel Buffer"),
-      // 32mb
-      size: 64_000_000,
+      size: 64_000_000, // Bytes
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false
     });
 
-    let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &compute_bgl,
-      entries: &[
-        wgpu::BindGroupEntry {
-          binding: 0,
-          resource: wgpu::BindingResource::TextureView(&compute_view),
-        },
-        wgpu::BindGroupEntry {
-          binding: 1,
-          resource: data_buffer.as_entire_binding(),
-        },
-        wgpu::BindGroupEntry {
-          binding: 2,
-          resource: voxel_buffer.as_entire_binding(),
-        },
-      ],
-      label: Some("Compute BG"),
-    });
     let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
       layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Compute Layout"),
@@ -196,8 +169,7 @@ impl<'window> WgpuCtx<'window> {
       label: Some("Compute Pipeline")
     });
 
-
-    let render_module = device.create_shader_module(wgpu::include_wgsl!("render.wgsl"));
+    let render_module = device.create_shader_module(wgpu::include_wgsl!("wgsl/render.wgsl"));
     let render_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       label: Some("Render BGL"),
       entries: &[
@@ -218,14 +190,6 @@ impl<'window> WgpuCtx<'window> {
           count: None,
         },
       ],
-    });
-    let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &render_bgl,
-      entries: &[
-        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&compute_view) },
-        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
-      ],
-      label: Some("Render BG"),
     });
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label: Some("Render Pipeline"),
@@ -258,103 +222,95 @@ impl<'window> WgpuCtx<'window> {
     });
 
 
-    WgpuCtx {
+    let mut ctx = WgpuCtx {
       surface,
       surface_config,
       device,
       queue,
+      sampler,
 
       data_buffer,
       voxel_buffer,
 
       compute_bgl,
       compute_pipeline,
-      compute_bind_group,
+      compute_bind_group: None,
       render_bgl,
       render_pipeline,
-      render_bind_group,
-      sampler,
-    }
+      render_bind_group: None,
+    };
+    ctx.gen_bind_groups();
+    ctx
   }
 
-  pub fn new(window: Arc<Window>) -> WgpuCtx<'window> { pollster::block_on(WgpuCtx::new_async(window)) }
+  /// Generates bind groups with resolution-dependent fields
+  fn gen_bind_groups(&mut self) {
+    let compute_texture = Self::new_texture(
+      &self.device,
+      self.surface_config.width,
+      self.surface_config.height
+    ) .create_view(&Default::default());
+
+    self.compute_bind_group = Some( self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &self.compute_bgl,
+      entries: &[
+        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&compute_texture), },
+        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Buffer(self.data_buffer.as_entire_buffer_binding()), },
+        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(self.voxel_buffer.as_entire_buffer_binding()), },
+      ],
+      label: Some("Compute BG"),
+    }) );
+
+    self.render_bind_group = Some( self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &self.render_bgl,
+      entries: &[
+        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&compute_texture) },
+        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+      ],
+      label: Some("Render BG"),
+    }) );
+
+  }
 
   // Windows sets window size to (0,0) when minimized, so we need a minimize check somewhere
   pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
     self.surface_config.width = new_size.width;
     self.surface_config.height = new_size.height;
     self.surface.configure(&self.device, &self.surface_config);
-    let compute_texture = Self::new_texture(&self.device, new_size.width, new_size.height);
-    let compute_view = compute_texture.create_view(&Default::default());
-
-    self.compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &self.compute_bgl,
-      entries: &[
-        wgpu::BindGroupEntry {
-          binding: 0,
-          resource: wgpu::BindingResource::TextureView(&compute_view),
-        },
-        wgpu::BindGroupEntry {
-          binding: 1,
-          resource: wgpu::BindingResource::Buffer(self.data_buffer.as_entire_buffer_binding()),
-        },
-        wgpu::BindGroupEntry {
-          binding: 2,
-          resource: wgpu::BindingResource::Buffer(self.voxel_buffer.as_entire_buffer_binding()),
-        },
-      ],
-      label: Some("Compute BG"),
-    });
-
-    self.render_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &self.render_bgl,
-      entries: &[
-        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&compute_view) },
-        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-      ],
-      label: Some("Render BG"),
-    });
+    self.gen_bind_groups();
   }
 
+  /// Writes the raw memory of the Graph into a GPU buffer
   pub fn update_voxels(&self, sdg:&SparseDirectedGraph<BasicNode3d>) {
-    let voxels = sdg.nodes.safe_data();
-    let safe_data: Vec<BasicNode3d> = voxels.iter().map(|node| {
-      match node {
-        Some(thing) => { **thing }
-        None => { [u32::MAX; 8] } // This is trechnically wrong, officially I should be using
-                                  // BasicNode3d::new(&vec![u32::MAX; BasicNode3d::Size]) or
-                                  // whatever, but that's a massive pain
-      }
-    }).collect();
-    self.queue.write_buffer(&self.voxel_buffer, 0, bytemuck::cast_slice(&safe_data));
+    self.queue.write_buffer(
+      &self.voxel_buffer,
+      0,
+      bytemuck::cast_slice(& unsafe { std::slice::from_raw_parts(
+        // Pointer to the raw data, converted to a pointer of bytes
+        sdg.nodes.unsafe_data().as_ptr() as *const u8,
+        // Number of elements * bytes per element
+        sdg.nodes.len() * std::mem::size_of::<BasicNode3d>(),
+      )})
+    );
+  }
+
+  fn dda(&mut self, game_data: &GameData, encoder: &mut wgpu::CommandEncoder) {
+    let data = Data::new(game_data.obj_data.head, game_data.obj_data.bounds, &game_data.camera);
+    self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
+    let mut compute_pass = encoder.begin_compute_pass(&Default::default());
+    compute_pass.set_pipeline(&self.compute_pipeline);
+    compute_pass.set_bind_group(0, &self.compute_bind_group, &[]);
+    let mut size = UVec2::new(self.surface_config.width, self.surface_config.height);
+    size = (size / DOWNSCALE + WORKGROUP - 1) / WORKGROUP; // Round up with int math
+    compute_pass.dispatch_workgroups(size.x, size.y, 1);
   }
 
   pub fn draw(&mut self, game_data: &GameData) {
-    let (width, height) = (self.surface_config.width, self.surface_config.height);
     let frame = self.surface.get_current_texture().unwrap();
     let view = frame.texture.create_view(&Default::default());
     let mut encoder = self.device.create_command_encoder(&Default::default());
 
-    let data = Data::new(
-      game_data.obj_data.head,
-      game_data.obj_data.bounds,
-      game_data.camera.position,
-      game_data.camera.basis(),
-      game_data.camera.aspect_ratio,
-      game_data.camera.fov,
-    );
-    self.queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&[data]));
-
-    let mut compute_pass = encoder.begin_compute_pass(&Default::default());
-    compute_pass.set_pipeline(&self.compute_pipeline);
-    compute_pass.set_bind_group(0, &self.compute_bind_group, &[],);
-    // This is ugly
-    compute_pass.dispatch_workgroups(
-      (width / DOWNSCALE + WORKGROUP_SQUARE - 1) / WORKGROUP_SQUARE,
-      (height / DOWNSCALE + WORKGROUP_SQUARE - 1) / WORKGROUP_SQUARE,
-      1
-    );
-    drop(compute_pass);
+    self.dda(game_data, &mut encoder);
 
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
       label: Some("Render Pass"),

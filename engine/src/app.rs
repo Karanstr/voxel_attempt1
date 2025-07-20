@@ -20,7 +20,7 @@ pub struct ObjectData {
 impl ObjectData {
   pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
     let mut head = sdg.get_root(0);
-    let height = 11;
+    let height = 6;
     let size = 2u32.pow(height);
     let mut noise = FastNoiseLite::new();
     noise.set_seed(None);
