@@ -1,13 +1,11 @@
 use std::{sync::Arc, u32};
 use glam::UVec2;
-#[allow(unused)]
-use sdg::prelude::{BasicNode3d, Node, SparseDirectedGraph};
+use sdg::prelude::{BasicNode3d, SparseDirectedGraph};
 use winit::window::Window;
 use crate::{app::GameData, camera::Camera};
 
-// ALWAYS UPDATE CORESPONDING VALUES IN ./render.wgsl and ./compute.wgsl
-const DOWNSCALE: u32 = 1;
-const WORKGROUP: u32 = 8;
+const DOWNSCALE: u32 = 1; // ./shaders/render.wgsl
+const WORKGROUP: u32 = 8; // ./shaders/compute.wgsl
 
 // Remember that vec3's are extended to 16 bytes
 #[repr(C)]
@@ -56,10 +54,10 @@ pub struct WgpuCtx<'window> {
   surface_config: wgpu::SurfaceConfiguration,
   device: wgpu::Device,
   queue: wgpu::Queue,
-  sampler: wgpu::Sampler,
 
   data_buffer: wgpu::Buffer,
   voxel_buffer: wgpu::Buffer,
+  sampler: wgpu::Sampler,
 
   compute_bgl: wgpu::BindGroupLayout,
   compute_pipeline: wgpu::ComputePipeline,
@@ -69,21 +67,7 @@ pub struct WgpuCtx<'window> {
   render_pipeline: wgpu::RenderPipeline,
   render_bind_group: Option<wgpu::BindGroup>,
 }
-
 impl<'window> WgpuCtx<'window> {
-
-  fn new_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-      label: Some("Storage Texture"),
-      size: wgpu::Extent3d { width: width / DOWNSCALE, height: height / DOWNSCALE, depth_or_array_layers: 1 },
-      mip_level_count: 1,
-      sample_count: 1,
-      dimension: wgpu::TextureDimension::D2,
-      format: wgpu::TextureFormat::Rgba8Unorm,
-      usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-      view_formats: &[],
-    })
-  }
 
   pub fn new(window: Arc<Window>) -> WgpuCtx<'window> {
     let instance = wgpu::Instance::default();
@@ -99,13 +83,11 @@ impl<'window> WgpuCtx<'window> {
     let surface_config = surface.get_default_config(&adapter, size.width, size.height).unwrap();
     surface.configure(&device, &surface_config);
 
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
-
     let compute_shader = device.create_shader_module(wgpu::include_wgsl!("shaders/compute.wgsl"));
     let compute_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       label: Some("Compute BGL"),
       entries: &[
-        // Output Texture
+        // Compute Output Texture
         wgpu::BindGroupLayoutEntry {
           binding: 0,
           visibility: wgpu::ShaderStages::COMPUTE,
@@ -138,13 +120,13 @@ impl<'window> WgpuCtx<'window> {
           },
           count: None,
         },
-        ],
+      ],
     });
 
     // Stores Data {..}
     let data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Data Buffer"),
-      size: 96, // bytes
+      size: std::mem::size_of::<Data>() as u64,
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
@@ -222,15 +204,16 @@ impl<'window> WgpuCtx<'window> {
     });
 
 
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
     let mut ctx = WgpuCtx {
       surface,
       surface_config,
       device,
       queue,
-      sampler,
 
       data_buffer,
       voxel_buffer,
+      sampler,
 
       compute_bgl,
       compute_pipeline,
@@ -243,13 +226,22 @@ impl<'window> WgpuCtx<'window> {
     ctx
   }
 
-  /// Generates bind groups with resolution-dependent fields
+  /// Generates bind groups with shared texture
   fn gen_bind_groups(&mut self) {
-    let compute_texture = Self::new_texture(
-      &self.device,
-      self.surface_config.width,
-      self.surface_config.height
-    ) .create_view(&Default::default());
+    let compute_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+      label: Some("Compute Texture"),
+      size: wgpu::Extent3d {
+        width: self.surface_config.width / DOWNSCALE,
+        height: self.surface_config.height / DOWNSCALE,
+        depth_or_array_layers: 1
+      },
+      mip_level_count: 1,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: wgpu::TextureFormat::Rgba8Unorm,
+      usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+      view_formats: &[],
+    }).create_view(&Default::default());
 
     self.compute_bind_group = Some( self.device.create_bind_group(&wgpu::BindGroupDescriptor {
       layout: &self.compute_bgl,
@@ -272,7 +264,6 @@ impl<'window> WgpuCtx<'window> {
 
   }
 
-  // Windows sets window size to (0,0) when minimized, so we need a minimize check somewhere
   pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
     self.surface_config.width = new_size.width;
     self.surface_config.height = new_size.height;
@@ -280,7 +271,7 @@ impl<'window> WgpuCtx<'window> {
     self.gen_bind_groups();
   }
 
-  /// Writes the raw memory of the Graph into a GPU buffer
+  /// Writes the raw memory of the graph into a GPU buffer
   pub fn update_voxels(&self, sdg:&SparseDirectedGraph<BasicNode3d>) {
     self.queue.write_buffer(
       &self.voxel_buffer,
