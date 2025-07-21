@@ -1,10 +1,10 @@
 use std::{sync::Arc, u32};
-use glam::UVec2;
+use glam::Vec2;
 use sdg::prelude::{BasicNode3d, SparseDirectedGraph};
 use winit::window::Window;
 use crate::{app::GameData, camera::Camera};
 
-const DOWNSCALE: u32 = 1; // ./shaders/render.wgsl
+const SCALE: f32 = 1.0 / 1.0; // ./shaders/render.wgsl
 const WORKGROUP: u32 = 8; // ./shaders/compute.wgsl
 
 // Remember that vec3's are extended to 16 bytes
@@ -58,6 +58,10 @@ pub struct WgpuCtx<'window> {
   data_buffer: wgpu::Buffer,
   voxel_buffer: wgpu::Buffer,
   sampler: wgpu::Sampler,
+
+  // circle_bgl: wgpu::BindGroupLayout,
+  // circle_pipeline: wgpu::RenderPipeline,
+  // circle_bind_group: wgpu::BindGroup,
 
   compute_bgl: wgpu::BindGroupLayout,
   compute_pipeline: wgpu::ComputePipeline,
@@ -151,13 +155,48 @@ impl<'window> WgpuCtx<'window> {
       label: Some("Compute Pipeline")
     });
 
+    // let circle_module = device.create_shader_module(wgpu::include_wgsl!("shaders/circle.wgsl"));
+    // let circle_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    //   label: Some("Circle BGL"),
+    //   entries: &[],
+    // });
+    // let circle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    //   label: Some("Render Pipeline"),
+    //   layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    //     label: Some("Render Layout"),
+    //     bind_group_layouts: &[&circle_bgl],
+    //     push_constant_ranges: &[],
+    //   })),
+    //   cache: None,
+    //   vertex: wgpu::VertexState {
+    //     compilation_options: wgpu::PipelineCompilationOptions::default(),
+    //     module: &circle_module,
+    //     entry_point: Some("vs_main"),
+    //     buffers: &[],
+    //   },
+    //   fragment: Some(wgpu::FragmentState {
+    //     compilation_options: wgpu::PipelineCompilationOptions::default(),
+    //     module: &render_module,
+    //     entry_point: Some("fs_main"),
+    //     targets: &[Some(wgpu::ColorTargetState {
+    //       format: surface.get_capabilities(&adapter).formats[0],
+    //       blend: Some(wgpu::BlendState::REPLACE),
+    //       write_mask: wgpu::ColorWrites::ALL,
+    //     })],
+    //   }),
+    //   primitive: wgpu::PrimitiveState::default(),
+    //   depth_stencil: None,
+    //   multisample: wgpu::MultisampleState::default(),
+    //   multiview: None
+    // });
+
     let render_module = device.create_shader_module(wgpu::include_wgsl!("shaders/render.wgsl"));
     let render_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       label: Some("Render BGL"),
       entries: &[
         wgpu::BindGroupLayoutEntry {
           binding: 0,
-          visibility: wgpu::ShaderStages::FRAGMENT,
+          visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
           ty: wgpu::BindingType::Texture {
             multisampled: false,
             view_dimension: wgpu::TextureViewDimension::D2,
@@ -215,9 +254,14 @@ impl<'window> WgpuCtx<'window> {
       voxel_buffer,
       sampler,
 
+      // circle_bgl,
+      // circle_pipeline,
+      // circle_bing_group,
+
       compute_bgl,
       compute_pipeline,
       compute_bind_group: None,
+
       render_bgl,
       render_pipeline,
       render_bind_group: None,
@@ -231,8 +275,8 @@ impl<'window> WgpuCtx<'window> {
     let compute_texture = self.device.create_texture(&wgpu::TextureDescriptor {
       label: Some("Compute Texture"),
       size: wgpu::Extent3d {
-        width: self.surface_config.width / DOWNSCALE,
-        height: self.surface_config.height / DOWNSCALE,
+        width: (self.surface_config.width as f32 * SCALE) as u32,
+        height: (self.surface_config.height as f32 * SCALE) as u32,
         depth_or_array_layers: 1
       },
       mip_level_count: 1,
@@ -291,22 +335,16 @@ impl<'window> WgpuCtx<'window> {
     let mut compute_pass = encoder.begin_compute_pass(&Default::default());
     compute_pass.set_pipeline(&self.compute_pipeline);
     compute_pass.set_bind_group(0, &self.compute_bind_group, &[]);
-    let mut size = UVec2::new(self.surface_config.width, self.surface_config.height);
-    size = (size / DOWNSCALE + WORKGROUP - 1) / WORKGROUP; // Round up with int math
-    compute_pass.dispatch_workgroups(size.x, size.y, 1);
+    let size = Vec2::new(self.surface_config.width as f32, self.surface_config.height as f32);
+    let scaled_size = ((size * SCALE).as_uvec2() + WORKGROUP - 1) / WORKGROUP; // Round up with int math
+    compute_pass.dispatch_workgroups(scaled_size.x, scaled_size.y, 1);
   }
-
-  pub fn draw(&mut self, game_data: &GameData) {
-    let frame = self.surface.get_current_texture().unwrap();
-    let view = frame.texture.create_view(&Default::default());
-    let mut encoder = self.device.create_command_encoder(&Default::default());
-
-    self.dda(game_data, &mut encoder);
-
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+  
+  fn upscale(&mut self, frame_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
+    let mut upscale_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
       label: Some("Render Pass"),
       color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-        view: &view,
+        view: &frame_view,
         resolve_target: None,
         ops: wgpu::Operations {
           load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -317,10 +355,19 @@ impl<'window> WgpuCtx<'window> {
       timestamp_writes: None,
       occlusion_query_set: None,
     });
-    render_pass.set_pipeline(&self.render_pipeline);
-    render_pass.set_bind_group(0, &self.render_bind_group, &[]);
-    render_pass.draw(0..3, 0..1);
-    drop(render_pass);
+    upscale_pass.set_pipeline(&self.render_pipeline);
+    upscale_pass.set_bind_group(0, &self.render_bind_group, &[]);
+    upscale_pass.draw(0..3, 0..1);
+  }
+
+  pub fn draw(&mut self, game_data: &GameData) {
+    let frame = self.surface.get_current_texture().unwrap();
+    let view = frame.texture.create_view(&Default::default());
+    let mut encoder = self.device.create_command_encoder(&Default::default());
+
+    self.dda(game_data, &mut encoder);
+    self.upscale(&view, &mut encoder);
+
     self.queue.submit(Some(encoder.finish()));
     frame.present();
   }
