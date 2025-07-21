@@ -4,7 +4,7 @@ use sdg::prelude::{BasicNode3d, SparseDirectedGraph};
 use winit::window::Window;
 use crate::{app::GameData, camera::Camera};
 
-const SCALE: f32 = 1.0 / 1.0; // ./shaders/render.wgsl
+const SCALE: f32 = 1.0 / 1.0; // ./shaders/upscale.wgsl
 const WORKGROUP: u32 = 8; // ./shaders/dda.wgsl
 
 // Remember that vec3's are extended to 16 bytes
@@ -172,7 +172,7 @@ impl UpscaleModule {
         },
       ],
     });
-    let upscale_module = device.create_shader_module(wgpu::include_wgsl!("shaders/render.wgsl"));
+    let upscale_module = device.create_shader_module(wgpu::include_wgsl!("shaders/upscale.wgsl"));
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label: Some("Upscale Pipeline"),
       layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
