@@ -84,8 +84,7 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
   var pos = initial_pos;
 
   result.voxel = vox_read(data.obj_head, pos.cell);
-  if result.voxel[0] != 0 { result.pos = pos; return result; }
-  loop {
+  while result.voxel[0] == 0 {
     result.steps += 1;
     // Sparse marching
     let neg_wall = pos.cell & vec3(~0i << result.voxel[1]);
@@ -100,7 +99,6 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
     // We bitcast pos.cell to u32s to avoid the < 0 branching via underflow
     if any(bitcast<vec3<u32>>(pos.cell) >= vec3(data.obj_bounds)) { break; }
     result.voxel = vox_read(data.obj_head, pos.cell);
-    if result.voxel[0] != 0u { break; }
   }
   result.pos = pos;
   return result;
