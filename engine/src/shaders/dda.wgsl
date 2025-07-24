@@ -1,5 +1,5 @@
 const WG_SIZE = 8;
-const TREE_HEIGHT = 6u;
+const TREE_HEIGHT = 11u;
 const SENTINEL = -314159.0;
 
 @group(0) @binding(0)
@@ -73,7 +73,6 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   update_pos(&pos, delta, bump);
   let hit = dda_vox_v4(pos, ray_dir, inv_dir, bump);
   if hit.voxel[0] == 0 { return vec4(0.0); }
-  // let ambient_occlusion = select(1, 0.5, );
   let step_color = 1.0 / vec3<f32>(hit.steps);
   let normal_color = 1.0 + vec3<f32>(hit.axis) * vec3(-0.2, 0.3, 0.4);
   return vec4(step_color * normal_color, 1);

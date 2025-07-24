@@ -5,11 +5,11 @@ let
     libxkbcommon
     wayland
     vulkan-loader
-  ];
+  ]; # Required for winit/wgpu windowing
 in {
   packages = dyn_libs ++ [ 
     pkgs.rust-analyzer
-    pkgs.linuxPackages_latest.perf
+    pkgs.linuxPackages_latest.perf # For flamegraph
   ];
 
   languages.rust = {
@@ -20,8 +20,6 @@ in {
     rustflags = "-C link-arg=-Wl,-rpath,${pkgs.lib.makeLibraryPath dyn_libs} ";
   };
 
-  # Throws path into the env for nvim lsp
-  env = {
-    RUST_ANALYZER = "${pkgs.rust-analyzer}/bin/rust-analyzer";
-  };
+  # Exposes path for nvim lsp
+  env.RUST_ANALYZER = "${pkgs.rust-analyzer}/bin/rust-analyzer";
 }
