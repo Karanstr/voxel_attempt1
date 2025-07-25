@@ -15,9 +15,7 @@ struct VoxelObject {
 
 struct Position {
   cell: vec3<i32>,
-  // 4byte padding
   offset: vec3<f32>,
-  // 4byte padding
 }
 fn update_pos(pos: ptr<function, Position>, delta: vec3<f32>, bump: vec3<f32>) {
   (*pos).cell += vec3<i32>(floor(delta));
@@ -49,7 +47,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let resolution = vec2<u32>(textureDimensions(output_tex));
   // We do a little padding so we can fit into the workgroups correctly
   if gid.x >= resolution.x || gid.y >= resolution.y { return; }
-  // Transform from <0,1> to <-1, 1>, then scale by aspect ratio
+  // Transform from <0,1> to <-1, 1>, then scale by aspect_ratio for proper dimensioning
   let uv = ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * 2 * vec2(cam.aspect_ratio, 1.0);
   textureStore(output_tex, vec2<i32>(gid.xy), march_init(uv));
 }
@@ -62,7 +60,7 @@ struct RayHit {
 }
 
 fn march_init(uv: vec2<f32>) -> vec4<f32> {
-  let world_dir = uv * vec2(cam.tan_fov) * vec2(cam.aspect_ratio, 1.0);
+  let world_dir = uv * vec2(cam.tan_fov);
   let ray_dir = obj.inv_rot * cam.rot * vec3(world_dir.x, world_dir.y, 1.0);
   let inv_dir = 1.0 / ray_dir;
   let bump = sign(ray_dir) * 0.0001;
