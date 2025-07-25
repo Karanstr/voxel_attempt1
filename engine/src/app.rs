@@ -8,7 +8,7 @@ use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
-use glam::{Vec2, Vec3, UVec3};
+use glam::{Quat, UVec3, Vec2, Vec3};
 use std::cell::OnceCell;
 use std::collections::VecDeque;
 use fastnoise_lite::{FastNoiseLite, NoiseType};
@@ -16,6 +16,8 @@ use fastnoise_lite::{FastNoiseLite, NoiseType};
 pub struct ObjectData {
   pub head: Index,
   pub bounds: u32,
+  pub pos: Vec3,
+  pub rot: Quat,
 }
 impl ObjectData {
   pub fn new(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
@@ -39,7 +41,9 @@ impl ObjectData {
 
     ObjectData {
       head,
-      bounds: size
+      bounds: size,
+      pos: Vec3::ZERO,
+      rot: Quat::IDENTITY,
     }
   }
 }
@@ -205,8 +209,10 @@ impl<'window> App<'window> {
     if dt > 0.1 { return }
 
     self.store_frame_time(dt);
-    // Player controls should only work while mouse is captured
-    if !self.mouse_captured { return }
+    // self.game_data.obj_data.rot = Quat::from_rotation_y(0.01) * self.game_data.obj_data.rot;
+    // self.game_data.obj_data.rot = self.game_data.obj_data.rot.normalize();
+    // self.game_data.obj_data.pos += 0.5;
+    if !self.mouse_captured { return } // Player controls should only work while mouse is captured
     if self.mouse_delta != Vec2::ZERO {
       self.game_data.camera.rotate(self.mouse_delta, 0.002);
       self.mouse_delta = Vec2::ZERO;

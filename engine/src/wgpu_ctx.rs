@@ -1,23 +1,66 @@
 use std::{sync::Arc, u32};
-use glam::{Vec2, Vec3};
+use glam::{Mat3, Vec2};
 use sdg::prelude::{BasicNode3d, SparseDirectedGraph};
 use winit::window::Window;
-use crate::{app::GameData, camera::Camera};
+use crate::{app::{GameData, ObjectData}, camera::Camera};
 
 const SCALE: f32 = 1.0 / 1.0; // ./shaders/upscale.wgsl
 const WORKGROUP: u32 = 8; // ./shaders/dda.wgsl
 
+// Semi-fixed point storage. Maybe used in the future
+// #[repr(C)]
+// #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+// struct Position {
+//   cell: [i32; 3],
+//   padding1: f32,
+//   offset: [f32; 3],
+//   padding2: f32,
+// }
+// impl Position {
+//   fn new(pos: Vec3) -> Self {
+//     Self {
+//       cell: pos.floor().as_ivec3().into(),
+//       padding1: 0.0,
+//       offset: pos.fract_gl().into(),
+//       padding2: 0.0,
+//     }
+//   }
+// }
+
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct ObjData {
+  pos: [f32; 3],
+  padding2: f32,
+
+  inv_right: [f32; 3],
+  padding3: f32,
+  inv_up: [f32; 3],
+  padding4: f32,
+  inv_forward: [f32; 3],
+  padding5: f32,
+  
   head: u32,
   extent: u32,
+  padding: [f32; 2],
 }
 impl ObjData {
-  fn new(head: u32, extent: u32) -> Self {
+  fn new(data: &ObjectData) -> Self {
+    let inv_mat = Mat3::from_quat(data.rot.inverse());
     Self {
-      head,
-      extent,
+      pos: data.pos.into(),
+      padding2: 0.0,
+
+      inv_right: inv_mat.col(0).into(),
+      padding3: 0.0,
+      inv_up: inv_mat.col(1).into(),
+      padding4: 0.0,
+      inv_forward: inv_mat.col(2).into(),
+      padding5: 0.0,
+
+      head: data.head,
+      extent: data.bounds,
+      padding: [0.0; 2],
     }
   }
 }
@@ -26,38 +69,36 @@ impl ObjData {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct CamData {
-  cam_aspect: f32,
-  cam_tan_fov: f32,
-  padding6: [f32; 2],
-
-  cam_cell: [i32; 3],
-  padding1: f32,
-  cam_offset: [f32; 3],
+  pos: [f32; 3],
   padding2: f32,
 
-  cam_forward: [f32; 3],
+  right: [f32; 3],
   padding3: f32,
-  cam_right: [f32; 3],
+  up: [f32; 3],
   padding4: f32,
-  cam_up: [f32; 3],
+  forward: [f32; 3],
   padding5: f32,
+
+  aspect_ratio: f32,
+  tan_fov: f32,
+  padding1: [f32; 2],
 }
 impl CamData {
   fn new(camera: &Camera) -> Self {
     Self {
-      cam_aspect: camera.aspect_ratio,
-      cam_tan_fov: (camera.fov / 2.).tan(),
-      padding6: [0.0; 2],
-      cam_cell: camera.position.floor().as_ivec3().into(),
-      padding1: 0.,
-      cam_offset: camera.position.fract_gl().into(),
-      padding2: 0.,
-      cam_forward: camera.basis()[2].into(),
+      pos: camera.position.into(),
+      padding2: 0.0,
+
+      right: camera.basis()[0].into(),
       padding3: 0.,
-      cam_right: camera.basis()[0].into(),
+      up: camera.basis()[1].into(),
       padding4: 0.,
-      cam_up: camera.basis()[1].into(),
+      forward: camera.basis()[2].into(),
       padding5: 0.,
+
+      aspect_ratio: camera.aspect_ratio,
+      tan_fov: (camera.fov / 2.).tan(),
+      padding1: [0.0; 2],
    }
   } 
 }
@@ -332,7 +373,7 @@ impl<'window> WgpuCtx<'window> {
   fn dda(&mut self, game_data: &GameData, encoder: &mut wgpu::CommandEncoder) {
     let cam = CamData::new(&game_data.camera);
     self.queue.write_buffer(&self.dda_compute.cam_buffer, 0, bytemuck::bytes_of(&cam));
-    let obj = ObjData::new(game_data.obj_data.head, game_data.obj_data.bounds);
+    let obj = ObjData::new(&game_data.obj_data);
     self.queue.write_buffer(&self.dda_compute.obj_buffer, 0, bytemuck::bytes_of(&obj));
 
     let mut compute_pass = encoder.begin_compute_pass(&Default::default());
