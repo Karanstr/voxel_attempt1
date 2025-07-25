@@ -8,7 +8,6 @@ var output_tex: texture_storage_2d<rgba8unorm, write>;
 struct VoxelObject {
   pos: vec3<f32>,
   inv_rot: mat3x3<f32>,
-
   head: u32,
   extent: u32, // Eventually replace with vec3<u32>
 }
@@ -66,7 +65,8 @@ fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let bump = sign(ray_dir) * 0.0001;
 
   // Center object, rotate it, then translate to proper origin
-  let ray_f32 = obj.inv_rot * (cam.pos - obj.pos - f32(obj.extent >> 1)) + f32(obj.extent >> 1);
+  let center = f32(obj.extent >> 1);
+  let ray_f32 = obj.inv_rot * (cam.pos - obj.pos - center) + center;
   var ray_pos = to_pos(ray_f32);
 
   var delta = vec3(0.0);
@@ -87,7 +87,6 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
   let dir_neg = bump < vec3(0.0);
   var result = RayHit();
   var pos = initial_pos;
-
   result.voxel = vox_read(obj.head, pos.cell);
   while result.voxel[0] == 0 {
     result.steps += 1;
@@ -108,10 +107,24 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
   return result;
 }
 
+// fn vox_read_down(head: u32, cell: vec3<i32>) -> vec2<u32> {
+//   var cur_idx = head;
+//   var mask = 1 << 30; // We want to mask out the 31st bit, which represents half the space
+//   var depth = 0;
+//   while mask != 0 {
+//     let child = select(vec3(1u, 2u, 4u), vec3(0u), cell & mask == vec3(0u));
+//     let next_idx = voxels[cur_idx].children[child.z | child.y | child.x];
+//     if next_idx == cur_idx { break; }
+//     cur_idx = next_idx;
+//     depth += 1;
+//     mask >>= 1;
+//   }
+//   return vec2<u32>(cur_idx, depth);
+// }
+
 fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
   var cur_idx = head;
   var height = TREE_HEIGHT;
-  var depth = 0;
   while height != 0 {
     height -= 1;
     let child = cell >> vec3<u32>(height) & vec3<i32>(1);

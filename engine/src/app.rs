@@ -209,7 +209,7 @@ impl<'window> App<'window> {
     if dt > 0.1 { return }
 
     self.store_frame_time(dt);
-    // self.game_data.obj_data.rot = Quat::from_rotation_y(0.01) * self.game_data.obj_data.rot;
+    // self.game_data.obj_data.rot = Quat::from_rotation_y(0.001) * self.game_data.obj_data.rot;
     // self.game_data.obj_data.rot = self.game_data.obj_data.rot.normalize();
     // self.game_data.obj_data.pos += 0.5;
     if !self.mouse_captured { return } // Player controls should only work while mouse is captured

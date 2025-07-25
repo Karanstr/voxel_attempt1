@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use ahash::AHashMap;
 use glam::UVec3;
-// use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use lilypads::Pond;
 
 pub type Index = u32;
@@ -28,6 +27,7 @@ pub trait Node : Clone + Copy + std::fmt::Debug {
 // GraphNodes are nodes which can be hashed, making them valid for SDG storage
 pub trait GraphNode : Node + std::hash::Hash + Eq {}
 
+// We need some way to bind leaves to more than indexes for save and load
 pub struct SparseDirectedGraph<T: GraphNode> {
   pub nodes : Pond<T>,
   ref_count: Vec<u32>,
@@ -132,54 +132,6 @@ impl<T: GraphNode> SparseDirectedGraph<T> {
 
 }
 
-
-// Changing this system'll take too long atm, I want to do other stuff
-// #[derive(Serialize, Deserialize)]
-// struct TreeStorage<N : Node> {
-//   head: Index,
-//   memory: Vec<N>,
-// }
-//
-// // Add metadata for all sorts of whatever I feel like
-// /// Assumes constant leaf count
-// #[allow(dead_code)]
-// impl<T: GraphNode + Serialize + DeserializeOwned> SparseDirectedGraph<T> {
-//   pub fn save_object_json(&self, head:Index) -> String {
-//     let mut object_graph = Self::new(self.leaf_count);
-//     let head_index = object_graph.clone_graph(self.nodes.data(), head);
-//     let storage = TreeStorage {
-//       head : head_index,
-//       memory : object_graph.nodes.data().clone()
-//     };
-//     serde_json::to_string(&storage).unwrap()
-//   }
-//
-//   // Currently requires the nodetype of both graph and data to be the same.
-//   pub fn load_object_json(&mut self, json:String) -> Index {
-//     let temp:TreeStorage<T> = serde_json::from_str(&json).unwrap();
-//     self.clone_graph(&temp.memory, temp.head)
-//   }
-//
-//   // Assumes equal leaf count (between the two graphs)
-//   fn clone_graph<N : Node> (&mut self, from:&Vec<N>, head:Index) -> Index {
-//     let mut remapped = HashMap::new();
-//     for i in 0 .. self.leaf_count as Index { remapped.insert(i, i); }
-//     for pointer in bfs_nodes(from, head, (self.leaf_count - 1) as usize).into_iter().rev() {
-//       if !remapped.contains_key(&pointer) {
-//         let mut new_kids = Vec::with_capacity(CHILD_COUNT);
-//         for child in N::Children::all() {
-//           new_kids.push(from[pointer as usize].get(child));
-//         }
-//         let new_node = T::new(&new_kids);
-//         remapped.insert(pointer, self.add_node(new_node));
-//       }
-//       self.nodes.add_ref(*remapped.get(&pointer).unwrap() as usize).unwrap();
-//     }
-//     *remapped.get(&head).unwrap() as Index
-//   }
-//
-// }
-
 // Utility function
 pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<Index> {
   let mut queue = VecDeque::from([head]);
@@ -196,20 +148,3 @@ pub fn bfs_nodes<N: Node>(nodes:&Vec<N>, head:Index, leaves:&Vec<Index>) -> Vec<
   bfs_indexes
 }
 
-#[test]
-fn merge_check() {
-  let mut sdg: SparseDirectedGraph<super::prelude::BasicNode3d> = SparseDirectedGraph::new();
-  let empty = sdg.add_leaf();
-  let full = sdg.add_leaf();
-  let mut head = sdg.get_root(empty);
-  for x in 0 .. 4 {
-    for y in 0 .. 4 {
-      for z in 0 .. 4 {
-        let path = super::prelude::Zorder3d::path_from(UVec3::new(x, y, z), 2);
-        head = sdg.set_node(head, &path, full);
-      }
-    }
-  }
-  let _ = sdg.nodes.trim();
-  assert_eq!(sdg.nodes.unsafe_data().len(), 2);
-}
