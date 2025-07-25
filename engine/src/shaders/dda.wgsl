@@ -5,30 +5,49 @@ const SENTINEL = -314159.0;
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba8unorm, write>;
 
-struct Data {
-  obj_head: u32,
-  obj_bounds: u32,
+struct VoxelObject {
+  // transform: vec3<f32>, // Position?
+  // 4byte padding
+  head: u32,
+  extent: u32, // Eventually replace with vec3<u32>
+}
+
+struct Position {
+  cell: vec3<i32>,
+  // 4byte padding
+  offset: vec3<f32>,
+  // 4byte padding
+}
+fn update_pos(pos: ptr<function, Position>, delta: vec3<f32>, bump: vec3<f32>) {
+  (*pos).cell += vec3<i32>(floor(delta));
+  (*pos).offset += fract(delta) + bump;
+  (*pos).cell += vec3<i32>(floor((*pos).offset));
+  (*pos).offset = fract((*pos).offset);
+}
+
+// Replace with matrix?
+struct Camera {
   aspect_ratio: f32,
   tan_fov: f32,
 
-  cam_cell: vec3<i32>,
+  pos: Position,
+  
+  forward: vec3<f32>,
   // padding: f32
-  cam_offset: vec3<f32>,
+  right: vec3<f32>,
   // padding: f32
-
-  cam_forward: vec3<f32>,
-  // padding: f32
-  cam_right: vec3<f32>,
-  // padding: f32
-  cam_up: vec3<f32>,
+  up: vec3<f32>,
   // padding: f32
 }
 @group(0) @binding(1)
-var<uniform> data: Data;
+var<uniform> cam: Camera;
 
 struct VoxelNode { children: array<u32, 8> }
 @group(0) @binding(2)
 var<storage> voxels: array<VoxelNode>;
+
+@group(0) @binding(3)
+var<uniform> obj: VoxelObject;
 
 @compute @workgroup_size(WG_SIZE, WG_SIZE)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -36,7 +55,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // We do a little padding so we can fit into the workgroups correctly
   if gid.x >= resolution.x || gid.y >= resolution.y { return; }
   // Transform from <0,1> to <-1, 1>, then scale by aspect ratio
-  let uv = 2 * ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * vec2(data.aspect_ratio, 1.0);
+  let uv = ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * 2 * vec2(cam.aspect_ratio, 1.0);
   textureStore(output_tex, vec2<i32>(gid.xy), march_init(uv));
 }
 
@@ -48,28 +67,18 @@ struct RayHit {
   steps: u32,
 }
 
-struct Position {
-  cell: vec3<i32>,
-  offset: vec3<f32>,
-}
-fn update_pos(pos: ptr<function, Position>, delta: vec3<f32>, bump: vec3<f32>) {
-  (*pos).cell += vec3<i32>(floor(delta));
-  (*pos).offset += fract(delta) + bump;
-  (*pos).cell += vec3<i32>(floor((*pos).offset));
-  (*pos).offset = fract((*pos).offset);
-}
-
 fn march_init(uv: vec2<f32>) -> vec4<f32> {
-  let ray_dir = data.cam_forward + data.tan_fov * (data.cam_right * uv.x + data.cam_up * uv.y);
-  let inv_dir = sign(ray_dir) / abs(ray_dir);
+  let ray_dir = cam.forward + cam.tan_fov * (cam.right * uv.x + cam.up * uv.y);
+  let inv_dir = sign(ray_dir) / abs(ray_dir); // 1.0 / ray_dir;
   let bump = sign(ray_dir) * 0.001;
   var delta = vec3(0.0);
-  if any(bitcast<vec3<u32>>(data.cam_cell) >= vec3(data.obj_bounds)) {
-    let t_start = aabb_intersect(vec3<f32>(data.cam_cell) + data.cam_offset, inv_dir);
+  // Perform translation up here
+  if any(bitcast<vec3<u32>>(cam.pos.cell) >= vec3(obj.extent)) {
+    let t_start = aabb_intersect(vec3<f32>(cam.pos.cell) + cam.pos.offset, inv_dir);
     if t_start == SENTINEL { return vec4(0.0); }
     delta = ray_dir * max(0, t_start);
   }
-  var pos = Position(data.cam_cell, data.cam_offset);
+  var pos = cam.pos;
   update_pos(&pos, delta, bump);
   let hit = dda_vox_v4(pos, ray_dir, inv_dir, bump);
   if hit.voxel[0] == 0 { return vec4(0.0); }
@@ -83,7 +92,7 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
   var result = RayHit();
   var pos = initial_pos;
 
-  result.voxel = vox_read(data.obj_head, pos.cell);
+  result.voxel = vox_read(obj.head, pos.cell);
   while result.voxel[0] == 0 {
     result.steps += 1;
     // Sparse marching
@@ -97,14 +106,13 @@ fn dda_vox_v4(initial_pos: Position, ray_dir: vec3<f32>, inv_dir: vec3<f32>, bum
     result.axis = t_wall == vec3(t_next);
     // Sample
     // We bitcast pos.cell to u32s to avoid the < 0 branching via underflow
-    if any(bitcast<vec3<u32>>(pos.cell) >= vec3(data.obj_bounds)) { break; }
-    result.voxel = vox_read(data.obj_head, pos.cell);
+    if any(bitcast<vec3<u32>>(pos.cell) >= vec3(obj.extent)) { break; }
+    result.voxel = vox_read(obj.head, pos.cell);
   }
   result.pos = pos;
   return result;
 }
 
-/// Trusts that you submit a valid cell
 fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
   var cur_idx = head;
   var height = TREE_HEIGHT;
@@ -121,7 +129,7 @@ fn vox_read(head: u32, cell: vec3<i32>) -> vec2<u32> {
 
 fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>) -> f32 {
   let t1 = (vec3(0.0) - ray_origin) * inv_dir;
-  let t2 = (vec3<f32>(data.obj_bounds) - ray_origin) * inv_dir;
+  let t2 = (vec3<f32>(obj.extent) - ray_origin) * inv_dir;
   let min_t = min(t1, t2);
   let max_t = max(t1, t2);
   let t_entry = max(max(min_t.x, min_t.y), min_t.z);

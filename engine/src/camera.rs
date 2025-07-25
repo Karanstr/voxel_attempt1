@@ -20,7 +20,7 @@ impl Default for Camera {
       position: Vec3::new(5., 100., 5.),
       yaw: PI/4.,
       pitch: 0.0,
-      aspect_ratio: 1.0,
+      aspect_ratio: 2.0,
       fov: 1.0,
     }
   }

@@ -1,5 +1,5 @@
 use std::{sync::Arc, u32};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use sdg::prelude::{BasicNode3d, SparseDirectedGraph};
 use winit::window::Window;
 use crate::{app::GameData, camera::Camera};
@@ -7,14 +7,28 @@ use crate::{app::GameData, camera::Camera};
 const SCALE: f32 = 1.0 / 1.0; // ./shaders/upscale.wgsl
 const WORKGROUP: u32 = 8; // ./shaders/dda.wgsl
 
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct ObjData {
+  head: u32,
+  extent: u32,
+}
+impl ObjData {
+  fn new(head: u32, extent: u32) -> Self {
+    Self {
+      head,
+      extent,
+    }
+  }
+}
+
 // Remember that vec3's are extended to 16 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Data {
-  obj_head: u32,
-  obj_bounds: u32,
+struct CamData {
   cam_aspect: f32,
   cam_tan_fov: f32,
+  padding6: [f32; 2],
 
   cam_cell: [i32; 3],
   padding1: f32,
@@ -28,13 +42,12 @@ struct Data {
   cam_up: [f32; 3],
   padding5: f32,
 }
-impl Data {
-  fn new(obj_head: u32, obj_bounds: u32, camera: &Camera) -> Self {
+impl CamData {
+  fn new(camera: &Camera) -> Self {
     Self {
-      obj_head,
-      obj_bounds,
       cam_aspect: camera.aspect_ratio,
       cam_tan_fov: (camera.fov / 2.).tan(),
+      padding6: [0.0; 2],
       cam_cell: camera.position.floor().as_ivec3().into(),
       padding1: 0.,
       cam_offset: camera.position.fract_gl().into(),
@@ -45,13 +58,14 @@ impl Data {
       padding4: 0.,
       cam_up: camera.basis()[1].into(),
       padding5: 0.,
-    }
+   }
   } 
 }
 
 struct DdaModule {
   voxel_buffer: wgpu::Buffer,
-  data_buffer: wgpu::Buffer,
+  cam_buffer: wgpu::Buffer,
+  obj_buffer: wgpu::Buffer,
   bind_group_layout: wgpu::BindGroupLayout,
   pipeline: wgpu::ComputePipeline,
   // We can't create the bind group without an associated texture
@@ -73,7 +87,7 @@ impl DdaModule {
           },
           count: None,
         },
-        // Data Buffer
+        // Cam Buffer
         wgpu::BindGroupLayoutEntry {
           binding: 1,
           visibility: wgpu::ShaderStages::COMPUTE,
@@ -95,11 +109,21 @@ impl DdaModule {
           },
           count: None,
         },
+        wgpu::BindGroupLayoutEntry {
+          binding: 3,
+          visibility: wgpu::ShaderStages::COMPUTE,
+          ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+          },
+          count: None,
+        },
       ],
     });
-    let data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-      label: Some("Data Buffer"),
-      size: std::mem::size_of::<Data>() as u64,
+    let cam_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("Cam Buffer"),
+      size: std::mem::size_of::<CamData>() as u64,
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
@@ -108,6 +132,12 @@ impl DdaModule {
       size: bytes_in_voxel_buffer,
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false
+    });
+    let obj_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("Object Buffer"),
+      size: std::mem::size_of::<ObjData>() as u64,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
       layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -123,7 +153,8 @@ impl DdaModule {
     });
     Self {
       voxel_buffer,
-      data_buffer,
+      cam_buffer,
+      obj_buffer,
       pipeline,
       bind_group_layout,
       bind_group: None
@@ -135,8 +166,9 @@ impl DdaModule {
       layout: &self.bind_group_layout,
       entries: &[
         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(output), },
-        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Buffer(self.data_buffer.as_entire_buffer_binding()), },
+        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Buffer(self.cam_buffer.as_entire_buffer_binding()), },
         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(self.voxel_buffer.as_entire_buffer_binding()), },
+        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Buffer(self.obj_buffer.as_entire_buffer_binding()), },
       ],
       label: Some("Dda BindGroup"),
     }) );
@@ -298,8 +330,11 @@ impl<'window> WgpuCtx<'window> {
   }
 
   fn dda(&mut self, game_data: &GameData, encoder: &mut wgpu::CommandEncoder) {
-    let data = Data::new(game_data.obj_data.head, game_data.obj_data.bounds, &game_data.camera);
-    self.queue.write_buffer(&self.dda_compute.data_buffer, 0, bytemuck::cast_slice(&[data]));
+    let cam = CamData::new(&game_data.camera);
+    self.queue.write_buffer(&self.dda_compute.cam_buffer, 0, bytemuck::bytes_of(&cam));
+    let obj = ObjData::new(game_data.obj_data.head, game_data.obj_data.bounds);
+    self.queue.write_buffer(&self.dda_compute.obj_buffer, 0, bytemuck::bytes_of(&obj));
+
     let mut compute_pass = encoder.begin_compute_pass(&Default::default());
     compute_pass.set_pipeline(&self.dda_compute.pipeline);
     compute_pass.set_bind_group(0, &self.dda_compute.bind_group, &[]);
