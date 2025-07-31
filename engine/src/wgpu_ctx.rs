@@ -7,27 +7,7 @@ use crate::{app::{GameData, ObjectData}, camera::Camera};
 const SCALE: f32 = 1.0 / 1.0; // ./shaders/upscale.wgsl
 const WORKGROUP: u32 = 8; // ./shaders/dda.wgsl
 
-// Semi-fixed point storage. Maybe used in the future
-// #[repr(C)]
-// #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-// struct Position {
-//   cell: [i32; 3],
-//   padding1: f32,
-//   offset: [f32; 3],
-//   padding2: f32,
-// }
-// impl Position {
-//   fn new(pos: Vec3) -> Self {
-//     Self {
-//       cell: pos.floor().as_ivec3().into(),
-//       padding1: 0.0,
-//       offset: pos.fract_gl().into(),
-//       padding2: 0.0,
-//     }
-//   }
-// }
-
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct ObjData {
   pos: [f32; 3],
@@ -41,8 +21,9 @@ struct ObjData {
   padding5: f32,
   
   head: u32,
+  height: u32,
   extent: u32,
-  padding: [f32; 2],
+  padding: f32,
 }
 impl ObjData {
   fn new(data: &ObjectData) -> Self {
@@ -59,8 +40,9 @@ impl ObjData {
       padding5: 0.0,
 
       head: data.head,
+      height: data.height,
       extent: data.bounds,
-      padding: [0.0; 2],
+      padding: 0.0,
     }
   }
 }
@@ -106,7 +88,7 @@ impl CamData {
 struct DdaModule {
   voxel_buffer: wgpu::Buffer,
   cam_buffer: wgpu::Buffer,
-  obj_buffer: wgpu::Buffer,
+  objects_buffer: wgpu::Buffer,
   bind_group_layout: wgpu::BindGroupLayout,
   pipeline: wgpu::ComputePipeline,
   // We can't create the bind group without an associated texture
@@ -154,7 +136,7 @@ impl DdaModule {
           binding: 3,
           visibility: wgpu::ShaderStages::COMPUTE,
           ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
             has_dynamic_offset: false,
             min_binding_size: None,
           },
@@ -174,12 +156,14 @@ impl DdaModule {
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false
     });
-    let obj_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-      label: Some("Object Buffer"),
-      size: std::mem::size_of::<ObjData>() as u64,
-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    let count = 2;
+    let objects_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("Objects Buffer"),
+      size: std::mem::size_of::<ObjData>() as u64 * count,
+      usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
+
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
       layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("DDA Layout"),
@@ -192,10 +176,11 @@ impl DdaModule {
       entry_point: Some("main"),
       label: Some("DDA Pipeline")
     });
+    
     Self {
       voxel_buffer,
       cam_buffer,
-      obj_buffer,
+      objects_buffer,
       pipeline,
       bind_group_layout,
       bind_group: None
@@ -209,7 +194,7 @@ impl DdaModule {
         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(output), },
         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Buffer(self.cam_buffer.as_entire_buffer_binding()), },
         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(self.voxel_buffer.as_entire_buffer_binding()), },
-        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Buffer(self.obj_buffer.as_entire_buffer_binding()), },
+        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Buffer(self.objects_buffer.as_entire_buffer_binding()), },
       ],
       label: Some("Dda BindGroup"),
     }) );
@@ -373,8 +358,9 @@ impl<'window> WgpuCtx<'window> {
   fn dda(&mut self, game_data: &GameData, encoder: &mut wgpu::CommandEncoder) {
     let cam = CamData::new(&game_data.camera);
     self.queue.write_buffer(&self.dda_compute.cam_buffer, 0, bytemuck::bytes_of(&cam));
-    let obj = ObjData::new(&game_data.obj_data);
-    self.queue.write_buffer(&self.dda_compute.obj_buffer, 0, bytemuck::bytes_of(&obj));
+    let world = ObjData::new(&game_data.world_data);
+    let block = ObjData::new(&game_data.cube_data);
+    self.queue.write_buffer(&self.dda_compute.objects_buffer, 0, bytemuck::cast_slice(&[world, block]));
 
     let mut compute_pass = encoder.begin_compute_pass(&Default::default());
     compute_pass.set_pipeline(&self.dda_compute.pipeline);
