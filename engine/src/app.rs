@@ -21,14 +21,14 @@ pub struct ObjectData {
   pub rot: Quat,
 }
 impl ObjectData {
-  pub fn new_block(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
+  pub fn new_block(sdg: &mut SparseDirectedGraph<BasicNode3d>, pos: Vec3) -> Self {
     let head = sdg.get_root(1);
     let height = 3;
     Self {
       head, 
       height,
       bounds: 2u32.pow(height),
-      pos: Vec3::splat(100.),
+      pos,
       rot: Quat::IDENTITY,
     }
   }
@@ -66,7 +66,9 @@ pub struct GameData {
   pub speed: f32,
   pub sdg: SparseDirectedGraph<BasicNode3d>,
   pub world_data: ObjectData,
-  pub cube_data: ObjectData,
+  pub cube1: ObjectData,
+  pub cube2: ObjectData,
+  pub cube3: ObjectData,
 }
 impl Default for GameData {
   fn default() -> Self {
@@ -74,13 +76,17 @@ impl Default for GameData {
     let _empty = sdg.add_leaf();
     let _full = sdg.add_leaf();
     let world_data = ObjectData::new_ground(&mut sdg);
-    let cube_data = ObjectData::new_block(&mut sdg);
+    let cube1 = ObjectData::new_block(&mut sdg, Vec3::splat(100.));
+    let cube2 = ObjectData::new_block(&mut sdg, Vec3::new(110., 100., 100.));
+    let cube3 = ObjectData::new_block(&mut sdg, Vec3::new(100., 110., 100.));
     Self {
       camera: Camera::default(),
       speed: 64.0,
       sdg,
       world_data,
-      cube_data,
+      cube1,
+      cube2,
+      cube3,
     }
   }
 }
@@ -225,7 +231,7 @@ impl<'window> App<'window> {
     if dt > 0.1 { return }
 
     self.store_frame_time(dt);
-    self.game_data.cube_data.rot *= Quat::from_rotation_y(0.001);
+    self.game_data.cube1.rot *= Quat::from_rotation_y(0.001);
     if !self.mouse_captured { return } // Player controls should only work while mouse is captured
     if self.mouse_delta != Vec2::ZERO {
       self.game_data.camera.rotate(self.mouse_delta, 0.002);

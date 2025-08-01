@@ -1,5 +1,6 @@
 const WG_SIZE = 8;
 const SENTINEL = -314159.0;
+const OBJECTS = 4;
 
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba8unorm, write>;
@@ -39,7 +40,7 @@ struct VoxelNode { children: array<u32, 8> }
 var<storage, read> voxels: array<VoxelNode>;
 
 @group(0) @binding(3)
-var<storage, read> objects: array<VoxelObject>;
+var<storage, read> objects: array<VoxelObject, OBJECTS>;
 
 @compute @workgroup_size(WG_SIZE, WG_SIZE)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -59,21 +60,16 @@ struct RayHit {
   t: f32,
 }
 
-// March objects in terms of closeness to their exits.
-// Give each an associate max_t value?
+// Naively attempt to trace each object
 fn march_init(uv: vec2<f32>) -> vec4<f32> {
   let world_dir = cam.rot * vec3(uv * vec2(cam.tan_fov), 1.0);
-  let world_hit = march_object(world_dir, 0);
-  let block_hit = march_object(world_dir, 1);
-  var hit: RayHit;
-  if world_hit.voxel[0] != 0 && block_hit.voxel[0] != 0 {
-    if world_hit.t <= block_hit.t { hit = world_hit; } else { hit = block_hit; }
+  var hit: RayHit = RayHit();
+  let stupid = 1.0; hit.t = stupid / 0.0;
+  for (var idx = 0u; idx < OBJECTS; idx++) {
+    let cur_hit = march_object(world_dir, idx);
+    if cur_hit.voxel[0] != 0 && cur_hit.t < hit.t { hit = cur_hit; }
   }
-  else if world_hit.voxel[0] != 0 { hit = world_hit; }
-  else if block_hit.voxel[0] != 0 { hit = block_hit; }
-  else { return vec4(0.0); }
-  // if world_hit.voxel[0] == 0 { return vec4(0.0); }
-  // else { hit = world_hit; }
+  if hit.voxel[0] == 0 { return vec4(0.0); }
   let step_color = 1.0 / vec3<f32>(hit.steps);
   let normal_color = 1.0 + vec3<f32>(hit.axis) * vec3(-0.2, 0.3, 0.4);
   return vec4(step_color * normal_color, 1);

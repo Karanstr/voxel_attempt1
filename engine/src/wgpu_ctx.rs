@@ -156,7 +156,7 @@ impl DdaModule {
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false
     });
-    let count = 2;
+    let count = 4;
     let objects_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Objects Buffer"),
       size: std::mem::size_of::<ObjData>() as u64 * count,
@@ -359,8 +359,10 @@ impl<'window> WgpuCtx<'window> {
     let cam = CamData::new(&game_data.camera);
     self.queue.write_buffer(&self.dda_compute.cam_buffer, 0, bytemuck::bytes_of(&cam));
     let world = ObjData::new(&game_data.world_data);
-    let block = ObjData::new(&game_data.cube_data);
-    self.queue.write_buffer(&self.dda_compute.objects_buffer, 0, bytemuck::cast_slice(&[world, block]));
+    let block1 = ObjData::new(&game_data.cube1);
+    let block2 = ObjData::new(&game_data.cube2);
+    let block3 = ObjData::new(&game_data.cube3);
+    self.queue.write_buffer(&self.dda_compute.objects_buffer, 0, bytemuck::cast_slice(&[world, block1, block2, block3]));
 
     let mut compute_pass = encoder.begin_compute_pass(&Default::default());
     compute_pass.set_pipeline(&self.dda_compute.pipeline);
