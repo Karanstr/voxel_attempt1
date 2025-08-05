@@ -1,89 +1,13 @@
 use std::{sync::Arc, u32};
-use glam::{Mat3, Vec2};
+use glam::Vec2;
 use sdg::prelude::{BasicNode3d, SparseDirectedGraph};
 use winit::window::Window;
-use crate::{app::{GameData, ObjectData}, camera::Camera};
+use crate::app::GameData;
+use crate::wgpu_buffers::*;
 
 const SCALE: f32 = 1.0 / 1.0; // ./shaders/upscale.wgsl
 const WORKGROUP: u32 = 8; // ./shaders/dda.wgsl
 
-#[repr(C, align(16))]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct ObjData {
-  pos: [f32; 3],
-  padding2: f32,
-
-  inv_right: [f32; 3],
-  padding3: f32,
-  inv_up: [f32; 3],
-  padding4: f32,
-  inv_forward: [f32; 3],
-  padding5: f32,
-  
-  head: u32,
-  height: u32,
-  extent: u32,
-  padding: f32,
-}
-impl ObjData {
-  fn new(data: &ObjectData) -> Self {
-    let inv_mat = Mat3::from_quat(data.rot.inverse());
-    Self {
-      pos: data.pos.into(),
-      padding2: 0.0,
-
-      inv_right: inv_mat.col(0).into(),
-      padding3: 0.0,
-      inv_up: inv_mat.col(1).into(),
-      padding4: 0.0,
-      inv_forward: inv_mat.col(2).into(),
-      padding5: 0.0,
-
-      head: data.head,
-      height: data.height,
-      extent: data.bounds,
-      padding: 0.0,
-    }
-  }
-}
-
-// Remember that vec3's are extended to 16 bytes
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct CamData {
-  pos: [f32; 3],
-  padding2: f32,
-
-  right: [f32; 3],
-  padding3: f32,
-  up: [f32; 3],
-  padding4: f32,
-  forward: [f32; 3],
-  padding5: f32,
-
-  aspect_ratio: f32,
-  tan_fov: f32,
-  padding1: [f32; 2],
-}
-impl CamData {
-  fn new(camera: &Camera) -> Self {
-    Self {
-      pos: camera.position.into(),
-      padding2: 0.0,
-
-      right: camera.basis()[0].into(),
-      padding3: 0.,
-      up: camera.basis()[1].into(),
-      padding4: 0.,
-      forward: camera.basis()[2].into(),
-      padding5: 0.,
-
-      aspect_ratio: camera.aspect_ratio,
-      tan_fov: (camera.fov / 2.).tan(),
-      padding1: [0.0; 2],
-   }
-  } 
-}
 
 struct DdaModule {
   voxel_buffer: wgpu::Buffer,
@@ -358,11 +282,11 @@ impl<'window> WgpuCtx<'window> {
   fn dda(&mut self, game_data: &GameData, encoder: &mut wgpu::CommandEncoder) {
     let cam = CamData::new(&game_data.camera);
     self.queue.write_buffer(&self.dda_compute.cam_buffer, 0, bytemuck::bytes_of(&cam));
-    let world = ObjData::new(&game_data.world_data);
-    let block1 = ObjData::new(&game_data.cube1);
-    let block2 = ObjData::new(&game_data.cube2);
-    let block3 = ObjData::new(&game_data.cube3);
-    self.queue.write_buffer(&self.dda_compute.objects_buffer, 0, bytemuck::cast_slice(&[world, block1, block2, block3]));
+    let mut objects = Vec::new();
+    for object in game_data.objects.iter() {
+      objects.push(ObjData::new(object))
+    }
+    self.queue.write_buffer(&self.dda_compute.objects_buffer, 0, bytemuck::cast_slice(&objects));
 
     let mut compute_pass = encoder.begin_compute_pass(&Default::default());
     compute_pass.set_pipeline(&self.dda_compute.pipeline);

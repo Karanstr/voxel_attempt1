@@ -65,10 +65,7 @@ pub struct GameData {
   pub camera: Camera,
   pub speed: f32,
   pub sdg: SparseDirectedGraph<BasicNode3d>,
-  pub world_data: ObjectData,
-  pub cube1: ObjectData,
-  pub cube2: ObjectData,
-  pub cube3: ObjectData,
+  pub objects: Vec<ObjectData>,
 }
 impl Default for GameData {
   fn default() -> Self {
@@ -83,10 +80,7 @@ impl Default for GameData {
       camera: Camera::default(),
       speed: 64.0,
       sdg,
-      world_data,
-      cube1,
-      cube2,
-      cube3,
+      objects: Vec::from([world_data, cube3, cube2, cube1]),
     }
   }
 }
@@ -141,7 +135,7 @@ impl<'window> ApplicationHandler for App<'window> {
         new_window.request_redraw();
         let new_ctx = WgpuCtx::new(new_window);
         new_ctx.update_voxels(&self.game_data.sdg);
-        self.wgpu_ctx.set(new_ctx).unwrap_or_else(|_| panic!("Should be impossible to get here, but I'm not gonna let this fail quietly somehow and I'm not implementing debug on WgpuCtx, that's way too much work"));
+        self.wgpu_ctx.set(new_ctx).unwrap_or_else(|_| panic!("I'm not gonna let this fail quietly and I'm not implementing debug on WgpuCtx, that's way too much work"));
       }
     }
   }
@@ -231,7 +225,7 @@ impl<'window> App<'window> {
     if dt > 0.1 { return }
 
     self.store_frame_time(dt);
-    self.game_data.cube1.rot *= Quat::from_rotation_y(0.001);
+    self.game_data.objects[1].rot *= Quat::from_rotation_y(0.001);
     if !self.mouse_captured { return } // Player controls should only work while mouse is captured
     if self.mouse_delta != Vec2::ZERO {
       self.game_data.camera.rotate(self.mouse_delta, 0.002);

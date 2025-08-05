@@ -7,6 +7,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 mod app;
 mod wgpu_ctx;
 mod camera;
+mod wgpu_buffers;
 
 fn main() {
   // let mut sdg = SparseDirectedGraph::new();
