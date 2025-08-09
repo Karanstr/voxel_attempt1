@@ -86,7 +86,7 @@ fn march_object(world_dir: vec3<f32>, idx: u32) -> RayHit {
   if any(bitcast<vec3<u32>>(ray_pos.cell) >= vec3(objects[idx].extent)) {
     t_start = aabb_intersect(ray_f32, inv_dir, objects[idx].extent);
     if t_start == SENTINEL { return RayHit(); }
-    t_start = abs(t_start);
+    t_start = max(0.0, t_start);
   }
   update_pos(&ray_pos, ray_dir * t_start, bump);
   var hit = dda_vox_v4(ray_pos, ray_dir, inv_dir, bump, idx);
