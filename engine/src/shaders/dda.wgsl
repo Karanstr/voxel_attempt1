@@ -36,22 +36,29 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if gid.x >= resolution.x || gid.y >= resolution.y { return; }
   // Transform from <0,1> to <-1, 1>, then scale by aspect_ratio for proper dimensioning
   let uv = ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * 2 * vec2(cam.aspect_ratio, 1.0);
-  textureStore(output_tex, vec2<i32>(gid.xy), march_init(uv));
+
+  let world_dir = cam.rot * vec3(uv * vec2(cam.tan_fov), 1.0);
+  let ray = march_objects(world_dir);
+  var result = vec4(0.0);
+  if ray.voxel[0] == 0 { result = vec4(0.0); } else {
+    let step_color = 1.0 / vec3<f32>(ray.steps);
+    let normal_color = 0.5 + vec3<f32>(ray.normal) * vec3(-0.2, 0.3, 0.4);
+    result = vec4(step_color * normal_color, 1);
+  }
+
+  textureStore(output_tex, vec2<i32>(gid.xy), result);
 }
 
 struct Position {
   cell: vec3<i32>,
   offset: vec3<f32>,
 }
-struct Hit {
-  normal: vec3<bool>,
-  voxel: vec2<u32>,
-}
 struct Ray {
   pos: Position,
   dir: vec3<f32>,
   inv_dir: vec3<f32>,
-  normal: vec3<f32>,
+  normal: vec3<bool>,
+  voxel: vec2<u32>,
   t: f32,
   steps: u32,
   alive: bool,
@@ -66,15 +73,6 @@ fn move_ray(ray: ptr<function, Ray>, timestep: f32) {
   (*ray).t += timestep;
 }
 
-fn march_init(uv: vec2<f32>) -> vec4<f32> {
-  let world_dir = cam.rot * vec3(uv * vec2(cam.tan_fov), 1.0);
-  let ray = march_objects(world_dir);
-  if ray.hit.voxel[0] == 0 { return vec4(0.0); }
-  let step_color = 1.0 / vec3<f32>(ray.steps);
-  let normal_color = 0.5 + vec3<f32>(ray.hit.normal) * vec3(-0.2, 0.3, 0.4);
-  return vec4(step_color * normal_color, 1);
-}
-
 fn march_objects(world_dir: vec3<f32>) -> Ray {
   var rays: array<Ray, OBJECTS>;
   let ONE = 1.0; let INF = ONE / 0.0;
@@ -83,14 +81,14 @@ fn march_objects(world_dir: vec3<f32>) -> Ray {
   for (var idx = 0u; idx < OBJECTS; idx += 1) {
     var ray = new_ray(world_dir, idx);
     if !ray.alive { continue; }
-    ray.hit.voxel = vox_read(objects[idx].head, objects[idx].height, ray.pos.cell);
-    while ray.hit.voxel[0] == 0 {
+    ray.voxel = vox_read(objects[idx].head, objects[idx].height, ray.pos.cell);
+    while ray.voxel[0] == 0 {
       dda_step(&ray);
       // If we've stepped outside of the object bounds
       // We bitcast pos.cell to u32s to avoid the < 0 branching via underflow
       if !all(bitcast<vec3<u32>>(ray.pos.cell) < vec3(objects[idx].extent)) { break; }
       // Sample current position
-      ray.hit.voxel = vox_read( objects[idx].head, objects[idx].height, ray.pos.cell);
+      ray.voxel = vox_read( objects[idx].head, objects[idx].height, ray.pos.cell);
     }
     if ray.t < best_ray.t { best_ray = ray; } 
   }
@@ -114,14 +112,14 @@ fn new_ray(world_dir: vec3<f32>, obj: u32) -> Ray {
 fn dda_step(ray: ptr<function, Ray>) {
   (*ray).steps += 1;
   // Sparse marching
-  let neg_wall = (*ray).pos.cell & vec3(~0i << (*ray).hit.voxel[1] );
-  let pos_wall = neg_wall + (1i << (*ray).hit.voxel[1] );
+  let neg_wall = (*ray).pos.cell & vec3(~0i << (*ray).voxel[1] );
+  let pos_wall = neg_wall + (1i << (*ray).voxel[1] );
   let next_wall = select(pos_wall, neg_wall, sign((*ray).dir) * 0.0001 < vec3(0.0));
   // Next position
   let t_wall = ( vec3<f32>( next_wall - (*ray).pos.cell ) - (*ray).pos.offset ) * (*ray).inv_dir;
   let t_step = min(min(t_wall.x, t_wall.y), t_wall.z);
   move_ray(ray, t_step);
-  (*ray).hit.normal = t_wall == vec3(t_step);
+  (*ray).normal = t_wall == vec3(t_step);
 }
 
 fn vox_read(head: u32, height: u32, cell: vec3<i32>) -> vec2<u32> {
@@ -146,7 +144,7 @@ fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, extent: u32) -> f32
   let t_exit = min(min(max_t.x, max_t.y), max_t.z);
 
   // Entry must be before exit and exit must be in the future
-  if t_entry > t_exit || t_exit < 0.0 { return SENTINEL; }
+  if t_exit < t_entry | t_exit < 0.0 { return SENTINEL; }
   return t_entry;
 }
 
