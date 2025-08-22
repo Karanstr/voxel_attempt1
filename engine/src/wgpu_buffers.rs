@@ -69,18 +69,18 @@ impl CamData {
   pub fn new(camera: &Camera) -> Self {
     Self {
       pos: camera.position.into(),
-      padding2: 0.0,
+      pad1: 0.0,
 
       right: camera.basis()[0].into(),
-      padding3: 0.,
+      pad2: 0.,
       up: camera.basis()[1].into(),
-      padding4: 0.,
+      pad3: 0.,
       forward: camera.basis()[2].into(),
-      padding5: 0.,
+      pad4: 0.,
 
       aspect_ratio: camera.aspect_ratio,
       tan_fov: (camera.fov / 2.).tan(),
-      padding1: [0.0; 2],
+      pad5: [0.0; 2],
    }
   } 
 }

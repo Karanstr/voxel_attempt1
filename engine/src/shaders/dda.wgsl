@@ -84,12 +84,12 @@ fn march_objects(world_dir: vec3<f32>) -> Ray {
     while ray.voxel[0] == 0 {
       dda_step(&ray);
       // If we've stepped outside of the object bounds
-      // We bitcast pos.cell to u32s to avoid the < 0 branching via underflow
+      // We bitcast pos.cell to u32s to avoid < 0 branching via underflow
       if !all(bitcast<vec3<u32>>(ray.pos.cell) - objects[idx].min_cell < objects[idx].extent) { break; }
       // Sample current position
       ray.voxel = vox_read( objects[idx].head, objects[idx].height, ray.pos.cell);
     }
-    if ray.t < best_ray.t { best_ray = ray; } 
+    if ray.t < best_ray.t && ray.voxel[0] != 0 { best_ray = ray; } 
   }
   return best_ray;
 }

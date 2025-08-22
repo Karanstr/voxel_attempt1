@@ -27,12 +27,13 @@ impl ObjectData {
   pub fn new_block(sdg: &mut SparseDirectedGraph<BasicNode3d>, pos: Vec3) -> Self {
     let head = sdg.get_root(1);
     let height = 3;
+    let size = 2u32.pow(height);
     Self {
       head, 
       height,
       min_cell: UVec3::ZERO,
-      extent: UVec3::splat(2u32.pow(height)),
-      center_of_rot: Vec3::splat((2u32.pow(height) >> 1) as f32),
+      extent: UVec3::splat(size),
+      center_of_rot: Vec3::splat((size >> 1) as f32),
       pos,
       rot: Quat::IDENTITY,
     }
@@ -41,6 +42,7 @@ impl ObjectData {
     let mut head = sdg.get_root(0);
     let height = 11;
     let size = 2u32.pow(height);
+    let max_y = 50;
     let mut noise = FastNoiseLite::new();
     noise.set_seed(None);
     noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
@@ -61,7 +63,7 @@ impl ObjectData {
       head,
       height,
       min_cell: UVec3::new(offset, 0, offset),
-      extent: UVec3::splat(2u32.pow(height)) - UVec3::new(offset, 0, offset),
+      extent: UVec3::splat(size) - UVec3::new(offset, size - max_y, offset),
       center_of_rot: Vec3::splat((size >> 1) as f32),
       pos: Vec3::ZERO,
       rot: Quat::IDENTITY,
