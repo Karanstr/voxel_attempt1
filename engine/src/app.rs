@@ -13,10 +13,13 @@ use std::cell::OnceCell;
 use std::collections::VecDeque;
 use fastnoise_lite::{FastNoiseLite, NoiseType};
 
+// Improve this
 pub struct ObjectData {
   pub head: Index,
   pub height: u32,
-  pub bounds: u32,
+  pub min_cell: UVec3,
+  pub extent: UVec3,
+  pub center_of_rot: Vec3,
   pub pos: Vec3,
   pub rot: Quat,
 }
@@ -27,7 +30,9 @@ impl ObjectData {
     Self {
       head, 
       height,
-      bounds: 2u32.pow(height),
+      min_cell: UVec3::ZERO,
+      extent: UVec3::splat(2u32.pow(height)),
+      center_of_rot: Vec3::splat((2u32.pow(height) >> 1) as f32),
       pos,
       rot: Quat::IDENTITY,
     }
@@ -50,11 +55,14 @@ impl ObjectData {
         }
       }
     }
+    let offset = 0;
 
     ObjectData {
       head,
       height,
-      bounds: size,
+      min_cell: UVec3::new(offset, 0, offset),
+      extent: UVec3::splat(2u32.pow(height)) - UVec3::new(offset, 0, offset),
+      center_of_rot: Vec3::splat((size >> 1) as f32),
       pos: Vec3::ZERO,
       rot: Quat::IDENTITY,
     }

@@ -8,7 +8,6 @@ var output_tex: texture_storage_2d<rgba8unorm, write>;
 struct Camera {
   pos: vec3<f32>,
   rot: mat3x3<f32>,
-
   aspect_ratio: f32,
   tan_fov: f32,
 }
@@ -21,10 +20,11 @@ var<storage, read> voxels: array<VoxelNode>;
 
 struct VoxelObject {
   pos: vec3<f32>,
-  inv_rot: mat3x3<f32>,
+  min_cell: vec3<u32>,
+  extent: vec3<u32>,
+  inv_transform: mat4x4<f32>,
   head: u32,
   height: u32,
-  extent: u32, // Eventually replace with vec3<u32> for tight aabb
 }
 @group(0) @binding(3)
 var<storage, read> objects: array<VoxelObject, OBJECTS>;
@@ -69,7 +69,6 @@ fn move_ray(ray: ptr<function, Ray>, timestep: f32) {
   (*ray).pos.offset += fract(delta) + sign((*ray).dir) * 0.0001;
   (*ray).pos.cell += vec3<i32>(floor( (*ray).pos.offset ));
   (*ray).pos.offset = fract( (*ray).pos.offset );
-
   (*ray).t += timestep;
 }
 
@@ -86,7 +85,7 @@ fn march_objects(world_dir: vec3<f32>) -> Ray {
       dda_step(&ray);
       // If we've stepped outside of the object bounds
       // We bitcast pos.cell to u32s to avoid the < 0 branching via underflow
-      if !all(bitcast<vec3<u32>>(ray.pos.cell) < vec3(objects[idx].extent)) { break; }
+      if !all(bitcast<vec3<u32>>(ray.pos.cell) - objects[idx].min_cell < objects[idx].extent) { break; }
       // Sample current position
       ray.voxel = vox_read( objects[idx].head, objects[idx].height, ray.pos.cell);
     }
@@ -97,13 +96,11 @@ fn march_objects(world_dir: vec3<f32>) -> Ray {
 
 fn new_ray(world_dir: vec3<f32>, obj: u32) -> Ray {
   var ray: Ray = Ray();
-  ray.dir = objects[obj].inv_rot * world_dir;
+  let pos_f32 = (objects[obj].inv_transform * vec4(cam.pos, 1.0)).xyz;
+  ray.pos = Position( vec3<i32>(floor(pos_f32)), fract(pos_f32));
+  ray.dir = (objects[obj].inv_transform * vec4(world_dir, 0.0)).xyz;
   ray.inv_dir = 1.0 / ray.dir;
-  // We want rotation to be applied around the center of the object
-  let center = f32(objects[obj].extent >> 1);
-  let ray_f32 = objects[obj].inv_rot * (cam.pos - objects[obj].pos - center) + center;
-  ray.pos = Position( vec3<i32>(floor(ray_f32)), fract(ray_f32));
-  let t_start = aabb_intersect(ray_f32, ray.inv_dir, objects[obj].extent);
+  let t_start = aabb_intersect(pos_f32, ray.inv_dir, objects[obj].min_cell, objects[obj].extent);
   ray.alive = t_start != SENTINEL;
   move_ray(&ray, max(0.0, t_start));
   return ray;
@@ -135,15 +132,14 @@ fn vox_read(head: u32, height: u32, cell: vec3<i32>) -> vec2<u32> {
   return vec2<u32>(cur_idx, cur_height);
 }
 
-fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, extent: u32) -> f32 {
-  let t1 = (vec3(0.0) - ray_origin) * inv_dir;
-  let t2 = (vec3<f32>(extent) - ray_origin) * inv_dir;
+fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, min_cell: vec3<u32>, extent: vec3<u32>) -> f32 {
+  let t1 = (vec3<f32>(min_cell) - ray_origin) * inv_dir;
+  let t2 = t1 + vec3<f32>(extent) * inv_dir;
   let min_t = min(t1, t2);
   let max_t = max(t1, t2);
   let t_entry = max(max(min_t.x, min_t.y), min_t.z);
   let t_exit = min(min(max_t.x, max_t.y), max_t.z);
-
-  // Entry must be before exit and exit must be in the future
+  // Entry must be before exit and exit must be forward
   if t_exit < t_entry | t_exit < 0.0 { return SENTINEL; }
   return t_entry;
 }
