@@ -33,7 +33,7 @@ impl ObjectData {
       height,
       min_cell: UVec3::ZERO,
       extent: UVec3::splat(size),
-      center_of_rot: Vec3::splat((size >> 1) as f32),
+      center_of_rot: Vec3::splat(size as f32) / 2.0,
       pos,
       rot: Quat::IDENTITY,
     }
@@ -64,7 +64,7 @@ impl ObjectData {
       height,
       min_cell: UVec3::new(offset, 0, offset),
       extent: UVec3::splat(size) - UVec3::new(offset, size - max_y, offset),
-      center_of_rot: Vec3::splat((size >> 1) as f32),
+      center_of_rot: (Vec3::splat(size as f32) / 2.0).with_y(0.0),
       pos: Vec3::ZERO,
       rot: Quat::IDENTITY,
     }
@@ -84,8 +84,8 @@ impl Default for GameData {
     let _full = sdg.add_leaf();
     let world_data = ObjectData::new_ground(&mut sdg);
     let cube1 = ObjectData::new_block(&mut sdg, Vec3::splat(100.));
-    let cube2 = ObjectData::new_block(&mut sdg, Vec3::new(110., 100., 100.));
-    let cube3 = ObjectData::new_block(&mut sdg, Vec3::new(100., 110., 100.));
+    let cube2 = ObjectData::new_block(&mut sdg, Vec3::new(130., 100., 100.));
+    let cube3 = ObjectData::new_block(&mut sdg, Vec3::new(100., 130., 100.));
     Self {
       camera: Camera::default(),
       speed: 64.0,
@@ -235,7 +235,9 @@ impl<'window> App<'window> {
     if dt > 0.1 { return }
 
     self.store_frame_time(dt);
-    self.game_data.objects[1].rot *= Quat::from_rotation_y(0.001);
+    self.game_data.objects[1].rot *= Quat::from_rotation_x(0.002);
+    self.game_data.objects[2].rot *= Quat::from_rotation_y(0.002);
+    self.game_data.objects[3].rot *= Quat::from_rotation_z(0.002);
     if !self.mouse_captured { return } // Player controls should only work while mouse is captured
     if self.mouse_delta != Vec2::ZERO {
       self.game_data.camera.rotate(self.mouse_delta, 0.002);
