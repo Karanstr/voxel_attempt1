@@ -4,6 +4,7 @@ const QUARTER: f32 = PI / 2.;
 
 /// Camera struct for handling camera position, rotation, and movement
 pub struct Camera {
+  pub speed: f32, // Temp field for persistent move speed until it gets tethered
   // Position
   pub position: Vec3,
   yaw: f32,   // Horizontal rotation in radians
@@ -17,9 +18,10 @@ pub struct Camera {
 impl Default for Camera {
   fn default() -> Self {
     Self {
-      position: Vec3::new(5., 100., 5.),
+      speed: 8.0,
+      position: Vec3::new(-5., 10., -5.),
       yaw: PI/4.,
-      pitch: 0.0,
+      pitch: -0.5,
       aspect_ratio: 2.0,
       fov: 1.0,
     }

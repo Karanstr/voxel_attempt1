@@ -1,6 +1,6 @@
-use crate::camera::Camera;
+use crate::{camera::Camera, objects::DagRef};
 use glam::Mat4;
-use crate::app::ObjectData;
+use crate::objects::VoxelObject;
 
 
 #[repr(C, align(16))]
@@ -15,23 +15,24 @@ pub struct ObjData {
 
   inv_transform: [ [f32; 4]; 4],
   
-  head: u32,
-  height: u32,
+  dag_ref: DagRef,
+  // head: u32,
+  // height: u32,
   pad4: [u32; 2],
 }
 impl ObjData {
-  pub fn new(data: &ObjectData) -> Self {
+  pub fn new(data: &VoxelObject) -> Self {
     // I don't really understand the matrix math yet, but it works.
     let inv_transform = 
-      Mat4::from_translation(data.center_of_rot) *
+      Mat4::from_translation(data.pivot_offset) *
       Mat4::from_quat(data.rot.inverse()) * 
-      Mat4::from_translation(-data.pos - data.center_of_rot);
+      Mat4::from_translation(-data.pos - data.pivot_offset);
     Self {
       pos: data.pos.into(),
       pad1: 0,
       min_cell: data.min_cell.into(),
       pad2: 0,
-      extent: data.extent.into(),
+      extent: (data.max_cell - data.min_cell).into(),
       pad3: 0,
 
       inv_transform: [
@@ -41,8 +42,9 @@ impl ObjData {
         inv_transform.col(3).into(),
       ],
 
-      head: data.head,
-      height: data.height,
+      dag_ref: data.dag_ref,
+      // head: data.dag_ref.,
+      // height: data.height,
       pad4: [0; 2],
     }
   }

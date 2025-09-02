@@ -1,6 +1,4 @@
-use sdg::prelude::*;
 use crate::wgpu_ctx::WgpuCtx;
-use crate::camera::Camera;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -8,92 +6,10 @@ use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
-use glam::{Quat, UVec3, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use std::cell::OnceCell;
-use std::collections::VecDeque;
-use fastnoise_lite::{FastNoiseLite, NoiseType};
+use crate::objects::GameData;
 
-// Improve this
-pub struct ObjectData {
-  pub head: Index,
-  pub height: u32,
-  pub min_cell: UVec3,
-  pub extent: UVec3,
-  pub center_of_rot: Vec3,
-  pub pos: Vec3,
-  pub rot: Quat,
-}
-impl ObjectData {
-  pub fn new_block(sdg: &mut SparseDirectedGraph<BasicNode3d>, pos: Vec3) -> Self {
-    let head = sdg.get_root(1);
-    let height = 3;
-    let size = 2u32.pow(height);
-    Self {
-      head, 
-      height,
-      min_cell: UVec3::ZERO,
-      extent: UVec3::splat(size),
-      center_of_rot: Vec3::splat(size as f32) / 2.0,
-      pos,
-      rot: Quat::IDENTITY,
-    }
-  }
-  pub fn new_ground(sdg: &mut SparseDirectedGraph<BasicNode3d>) -> Self {
-    let mut head = sdg.get_root(0);
-    let height = 11;
-    let size = 2u32.pow(height);
-    let max_y = 50;
-    let mut noise = FastNoiseLite::new();
-    noise.set_seed(None);
-    noise.set_noise_type(Some(NoiseType::OpenSimplex2S));
-    noise.set_frequency(Some(0.0027));
-    for x in 0 .. size {
-      for z in 0 .. size {
-        let sample = noise.get_noise_2d(x as f32, z as f32) * 0.05;
-        if sample > 0.0 {
-          let y = (sample * size as f32) as u32;
-          let path = Zorder3d::path_from(UVec3::new(x, y, z), height);
-          head = sdg.set_node(head, &path, 1);
-        }
-      }
-    }
-    let offset = 0;
-
-    ObjectData {
-      head,
-      height,
-      min_cell: UVec3::new(offset, 0, offset),
-      extent: UVec3::splat(size) - UVec3::new(offset, size - max_y, offset),
-      center_of_rot: (Vec3::splat(size as f32) / 2.0).with_y(0.0),
-      pos: Vec3::ZERO,
-      rot: Quat::IDENTITY,
-    }
-  }
-}
-
-pub struct GameData {
-  pub camera: Camera,
-  pub speed: f32,
-  pub sdg: SparseDirectedGraph<BasicNode3d>,
-  pub objects: Vec<ObjectData>,
-}
-impl Default for GameData {
-  fn default() -> Self {
-    let mut sdg = SparseDirectedGraph::new();
-    let _empty = sdg.add_leaf();
-    let _full = sdg.add_leaf();
-    let world_data = ObjectData::new_ground(&mut sdg);
-    let cube1 = ObjectData::new_block(&mut sdg, Vec3::splat(100.));
-    let cube2 = ObjectData::new_block(&mut sdg, Vec3::new(130., 100., 100.));
-    let cube3 = ObjectData::new_block(&mut sdg, Vec3::new(100., 130., 100.));
-    Self {
-      camera: Camera::default(),
-      speed: 64.0,
-      sdg,
-      objects: Vec::from([world_data, cube3, cube2, cube1]),
-    }
-  }
-}
 
 pub struct App<'window> {
   // Windowing
@@ -110,8 +26,7 @@ pub struct App<'window> {
 
   // Frame Timing
   last_update: Instant,
-  frame_times: VecDeque<f32>,
-  fps_update_timer: f32,
+  fps_update_timer: f32, // We want to print fps once per second
 }
 
 impl<'window> Default for App<'window> {
@@ -125,12 +40,11 @@ impl<'window> Default for App<'window> {
       mouse_buttons_pressed: Vec::new(),
       mouse_captured: false,
       last_update: Instant::now(),
-      frame_times: VecDeque::with_capacity(100),
       fps_update_timer: 0.0,
     }
   }
-}
 
+}
 impl<'window> ApplicationHandler for App<'window> {
   // Create window and wgpu_ctx
   // Requests redraw
@@ -138,9 +52,9 @@ impl<'window> ApplicationHandler for App<'window> {
     match self.window.get() {
       Some(already) => already.request_redraw(),
       None => {
-        let new_window = Arc::new(event_loop.create_window(
-          Window::default_attributes().with_title("Voxel")
-        ).unwrap());
+        let new_window = Arc::new(
+          event_loop.create_window(Window::default_attributes()).unwrap()
+        );
         self.window.set(new_window.clone()).unwrap();
         new_window.request_redraw();
         let new_ctx = WgpuCtx::new(new_window);
@@ -160,7 +74,6 @@ impl<'window> ApplicationHandler for App<'window> {
     }
   }
 
-  // This function shouldn't perform any advanced logic, simply act as a passthrough for data? 
   fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
     match event {
       WindowEvent::CloseRequested => event_loop.exit(),
@@ -168,35 +81,18 @@ impl<'window> ApplicationHandler for App<'window> {
         self.game_data.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
         self.wgpu_ctx.get_mut().unwrap().resize(new_size);
       },
-      WindowEvent::RedrawRequested => {
-        // Update camera based on input
-        self.tick_camera();
-        self.display_fps(1.);
-
-        self.wgpu_ctx.get_mut().unwrap().draw(&self.game_data);
-        self.window.get().unwrap().request_redraw();
-      },
+      WindowEvent::RedrawRequested => self.redraw(),
       WindowEvent::KeyboardInput { event, .. } => {
         if let PhysicalKey::Code(key_code) = event.physical_key {
           match event.state {
-            ElementState::Pressed => {
-              if !self.keys_pressed.contains(&key_code) { self.keys_pressed.push(key_code); }
-              // Toggle mouse capture with Escape key
-              // Not a huge fan of handling these key presses in two different places..
-              if key_code == KeyCode::Escape { self.toggle_mouse_capture() }
-            },
+            ElementState::Pressed => if !self.keys_pressed.contains(&key_code) { self.keys_pressed.push(key_code); },
             ElementState::Released => self.keys_pressed.retain(|&k| k != key_code),
           }
         }
       },
       WindowEvent::MouseInput { state, button, .. } => {
         match state {
-          ElementState::Pressed => {
-            if !self.mouse_buttons_pressed.contains(&button) { self.mouse_buttons_pressed.push(button) }
-            // Capture cursor on left click
-            // Same as escape, I don't like the dual processing and plan to create specific functions to handle them.
-            if button == MouseButton::Left && !self.mouse_captured { self.toggle_mouse_capture(); }
-          },
+          ElementState::Pressed => if !self.mouse_buttons_pressed.contains(&button) { self.mouse_buttons_pressed.push(button) },
           ElementState::Released => self.mouse_buttons_pressed.retain(|&b| b != button)
         }
       },
@@ -205,17 +101,16 @@ impl<'window> ApplicationHandler for App<'window> {
   }
 }
 
-impl<'window> App<'window> {    
-  fn store_frame_time(&mut self, dt: f32) {
-    if self.frame_times.len() == 100 { self.frame_times.pop_front(); }
-    self.frame_times.push_back(dt);
-    self.fps_update_timer += dt;
-  }
+impl<'window> App<'window> {
+  fn redraw(&mut self) {
+    let before = Instant::now();
+    self.tick_world();
 
-  fn display_fps(&mut self, time_since_last: f32) {
-    if self.fps_update_timer >= time_since_last {
+    self.wgpu_ctx.get_mut().unwrap().draw(&self.game_data);
+    self.window.get().unwrap().request_redraw();
+    if self.fps_update_timer > 1.0 {
+      println!("FPS: {:.1}", 1.0 / Instant::now().duration_since(before).as_secs_f32());
       self.fps_update_timer = 0.0;
-      println!("FPS: {:.1}", self.frame_times.len() as f32 / self.frame_times.iter().sum::<f32>());
     }
   }
 
@@ -228,53 +123,47 @@ impl<'window> App<'window> {
     }
   }
 
-  fn tick_camera(&mut self) {
+  fn tick_world(&mut self) {
     let now = Instant::now();
     let dt = now.duration_since(self.last_update).as_secs_f32();
     self.last_update = now;
-    if dt > 0.1 { return }
+    if dt > 1.0 { return }
+    self.fps_update_timer += dt;
+    self.handle_inputs(dt);
+  }
 
-    self.store_frame_time(dt);
-    self.game_data.objects[1].rot *= Quat::from_rotation_x(0.002);
-    self.game_data.objects[2].rot *= Quat::from_rotation_y(0.002);
-    self.game_data.objects[3].rot *= Quat::from_rotation_z(0.002);
-    if !self.mouse_captured { return } // Player controls should only work while mouse is captured
+  fn handle_inputs(&mut self, delta_time: f32) {
+    if self.keys_pressed.contains(&KeyCode::Escape)
+    || (self.mouse_buttons_pressed.contains(&MouseButton::Left) && !self.mouse_captured) {
+      self.toggle_mouse_capture()
+    }
+    if !self.mouse_captured { return }
+    
     if self.mouse_delta != Vec2::ZERO {
       self.game_data.camera.rotate(self.mouse_delta, 0.002);
       self.mouse_delta = Vec2::ZERO;
     }
-    if !self.keys_pressed.is_empty() {
-      let camera_speed = self.game_data.speed * dt;
-      let (right, _, mut forward) = self.game_data.camera.basis().into();
-      forward = forward.with_y(0.0).normalize();
-      let mut displacement = Vec3::ZERO;
-      // This feels like a really silly way to key lookups when a hashmap would prob be better..
-      if self.keys_pressed.contains(&KeyCode::KeyW) {
-        displacement += forward;
+
+    let mut displacement = Vec3::ZERO; // Replace with impulse
+    let camera_speed = self.game_data.camera.speed * delta_time;
+    let (right, _, mut forward) = self.game_data.camera.basis().into();
+    forward = forward.with_y(0.0).normalize();
+    for key in &self.keys_pressed {
+      match key {
+        KeyCode::Escape => {}
+        KeyCode::KeyW => { displacement += forward }
+        KeyCode::KeyS => { displacement -= forward }
+        KeyCode::KeyD => { displacement += right }
+        KeyCode::KeyA => { displacement -= right }
+        KeyCode::Space => { displacement += Vec3::Y }
+        KeyCode::ShiftLeft => { displacement -= Vec3::Y }
+        KeyCode::Equal => { self.game_data.camera.speed *= 1.003 }
+        KeyCode::Minus => { self.game_data.camera.speed /= 1.003 }
+        _ => ()
       }
-      if self.keys_pressed.contains(&KeyCode::KeyS) {
-        displacement -= forward;
-      }
-      if self.keys_pressed.contains(&KeyCode::KeyA) {
-        displacement -= right;
-      }
-      if self.keys_pressed.contains(&KeyCode::KeyD) {
-        displacement += right;
-      }
-      if self.keys_pressed.contains(&KeyCode::Space) {
-        displacement += Vec3::Y;
-      }
-      if self.keys_pressed.contains(&KeyCode::ShiftLeft) {
-        displacement -= Vec3::Y;
-      }
-      if self.keys_pressed.contains(&KeyCode::Equal) {
-        self.game_data.speed *= 1.003;
-      }
-      if self.keys_pressed.contains(&KeyCode::Minus) {
-        self.game_data.speed /= 1.003;
-      }
-      self.game_data.camera.position += displacement.normalize_or_zero() * camera_speed;
     }
+    self.game_data.camera.position += displacement.normalize_or_zero() * camera_speed;
+
   }
 
 }

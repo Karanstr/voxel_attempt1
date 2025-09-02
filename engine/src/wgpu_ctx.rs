@@ -2,7 +2,7 @@ use std::{sync::Arc, u32};
 use glam::Vec2;
 use sdg::prelude::{BasicNode3d, SparseDirectedGraph};
 use winit::window::Window;
-use crate::app::GameData;
+use crate::objects::GameData;
 use crate::wgpu_buffers::*;
 
 const SCALE: f32 = 1.0 / 1.0; // ./shaders/upscale.wgsl

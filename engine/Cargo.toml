@@ -11,3 +11,6 @@ wgpu = "25.0"
 pollster = "0.4.0"
 fastnoise-lite = "1.1"
 sdg = { path = "../graph" }
+rapier3d = "0.28"
+nalgebra = { version = "0.34", features = ["convert-glam030"]}
+lilypads = "0.10"
