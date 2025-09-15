@@ -2,6 +2,8 @@ use crate::camera::Camera;
 use glam::{Vec3, UVec3, Quat};
 use sdg::prelude::*;
 use lilypads::Pond;
+use fastnoise_lite::FastNoiseLite;
+use fastnoise_lite::NoiseType;
 
 // struct ObjectManager {
 //   objects: Pond<VoxelObject>
@@ -34,6 +36,7 @@ pub struct VoxelObject {
 }
 impl VoxelObject {
   pub fn is_point_solid(pos: Vec3) -> bool { todo!() } 
+
   pub fn floor(sdg: &mut SparseDirectedGraph<BasicNode3d>, pos: Vec3) -> Self {
     let mut head = sdg.get_root(0);
     let height = 4;
@@ -52,7 +55,7 @@ impl VoxelObject {
         }
       }
     } 
-
+ 
     Self {
       dag_ref: DagRef::new(head, height),
       min_cell: UVec3::ZERO,

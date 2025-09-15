@@ -40,8 +40,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let world_dir = cam.rot * vec3(uv * vec2(cam.tan_fov), 1.0);
   let ray = march_objects(world_dir);
   var result = vec4(0.0);
-  if ray.voxel[0] == 0 { result = vec4(0.0); } else {
-    let step_color = 1.0 / vec3<f32>(ray.steps);
+  if ray.voxel[0] == 0 {
+    result = vec4(0.25) / f32(ray.steps);
+  } else {
+    let step_color = 1.0 / f32(ray.steps);
     let normal_color = 0.5 + vec3<f32>(ray.normal) * vec3(-0.2, 0.3, 0.4);
     result = vec4(step_color * normal_color, 1);
   }
@@ -76,6 +78,7 @@ fn march_objects(world_dir: vec3<f32>) -> Ray {
   var rays: array<Ray, OBJECTS>;
   let ONE = 1.0; let INF = ONE / 0.0;
   var best_ray = Ray(); best_ray.t = INF;
+  var steps = 1u;
 
   for (var idx = 0u; idx < OBJECTS; idx += 1) {
     var ray = new_ray(world_dir, idx);
@@ -86,23 +89,25 @@ fn march_objects(world_dir: vec3<f32>) -> Ray {
       // If we've stepped outside of the object bounds
       // We bitcast pos.cell to u32s to avoid < 0 branching via underflow
       if !all(bitcast<vec3<u32>>(ray.pos.cell) - objects[idx].min_cell < objects[idx].extent) { break; }
-      // Sample current position
-      ray.voxel = vox_read( objects[idx].head, objects[idx].height, ray.pos.cell);
+      ray.voxel = vox_read( objects[idx].head, objects[idx].height, ray.pos.cell); // Sample current position
     }
     if ray.t < best_ray.t && ray.voxel[0] != 0 { best_ray = ray; } 
+    steps += ray.steps;
   }
+  best_ray.steps = steps;
   return best_ray;
 }
 
 fn new_ray(world_dir: vec3<f32>, obj: u32) -> Ray {
-  var ray: Ray = Ray();
+  var ray = Ray();
   let pos_f32 = (objects[obj].inv_transform * vec4(cam.pos, 1.0)).xyz;
   ray.pos = Position( vec3<i32>(floor(pos_f32)), fract(pos_f32));
   ray.dir = (objects[obj].inv_transform * vec4(world_dir, 0.0)).xyz;
   ray.inv_dir = 1.0 / ray.dir;
-  let t_start = aabb_intersect(pos_f32, ray.inv_dir, objects[obj].min_cell, objects[obj].extent);
-  ray.alive = t_start != SENTINEL;
-  move_ray(&ray, max(0.0, t_start));
+  let intersection = aabb_intersect(pos_f32, ray.inv_dir, objects[obj].min_cell, objects[obj].extent);
+  ray.alive = intersection.t != SENTINEL;
+  ray.normal = intersection.normal;
+  move_ray(&ray, max(0.0, intersection.t));
   return ray;
 }
 
@@ -111,7 +116,7 @@ fn dda_step(ray: ptr<function, Ray>) {
   // Sparse marching
   let neg_wall = (*ray).pos.cell & vec3(~0i << (*ray).voxel[1] );
   let pos_wall = neg_wall + (1i << (*ray).voxel[1] );
-  let next_wall = select(pos_wall, neg_wall, sign((*ray).dir) * 0.0001 < vec3(0.0));
+  let next_wall = select(pos_wall, neg_wall, (*ray).dir < vec3(0.0));
   // Next position
   let t_wall = ( vec3<f32>( next_wall - (*ray).pos.cell ) - (*ray).pos.offset ) * (*ray).inv_dir;
   let t_step = min(min(t_wall.x, t_wall.y), t_wall.z);
@@ -132,7 +137,13 @@ fn vox_read(head: u32, height: u32, cell: vec3<i32>) -> vec2<u32> {
   return vec2<u32>(cur_idx, cur_height);
 }
 
-fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, min_cell: vec3<u32>, extent: vec3<u32>) -> f32 {
+struct Intersection {
+  t: f32,
+  normal: vec3<bool>
+}
+
+fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, min_cell: vec3<u32>, extent: vec3<u32>) -> Intersection {
+  var intersection = Intersection(SENTINEL, vec3(false));
   let t1 = (vec3<f32>(min_cell) - ray_origin) * inv_dir;
   let t2 = t1 + vec3<f32>(extent) * inv_dir;
   let min_t = min(t1, t2);
@@ -140,7 +151,9 @@ fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, min_cell: vec3<u32>
   let t_entry = max(max(min_t.x, min_t.y), min_t.z);
   let t_exit = min(min(max_t.x, max_t.y), max_t.z);
   // Entry must be before exit and exit must be forward
-  if t_exit < t_entry | t_exit < 0.0 { return SENTINEL; }
-  return t_entry;
+  if t_exit < t_entry | t_exit < 0.0 { return intersection; }
+  intersection.t = t_entry;
+  intersection.normal = vec3(t_entry) == min_t;
+  return intersection;
 }
 
