@@ -2,7 +2,6 @@ use crate::{camera::Camera, objects::DagRef};
 use glam::Mat4;
 use crate::objects::VoxelObject;
 
-
 #[repr(C, align(16))]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ObjData {
@@ -13,6 +12,7 @@ pub struct ObjData {
   extent: [u32; 3],
   pad3: u32,
 
+  transform: [ [f32; 4]; 4],
   inv_transform: [ [f32; 4]; 4],
   
   dag_ref: DagRef,
@@ -27,6 +27,7 @@ impl ObjData {
       Mat4::from_translation(data.pivot_offset) *
       Mat4::from_quat(data.rot.inverse()) * 
       Mat4::from_translation(-data.pos - data.pivot_offset);
+    let transform = inv_transform.inverse();
     Self {
       pos: data.pos.into(),
       pad1: 0,
@@ -35,6 +36,12 @@ impl ObjData {
       extent: (data.max_cell - data.min_cell).into(),
       pad3: 0,
 
+      transform: [
+        transform.col(0).into(),
+        transform.col(1).into(),
+        transform.col(2).into(),
+        transform.col(3).into(),
+      ],
       inv_transform: [
         inv_transform.col(0).into(),
         inv_transform.col(1).into(),
@@ -83,6 +90,7 @@ impl CamData {
       aspect_ratio: camera.aspect_ratio,
       tan_fov: (camera.fov / 2.).tan(),
       pad5: [0.0; 2],
-   }
-  } 
+    }
+  }
 }
+

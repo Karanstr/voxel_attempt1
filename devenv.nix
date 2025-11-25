@@ -9,7 +9,7 @@ let
 in {
   packages = dyn_libs ++ [ 
     pkgs.rust-analyzer
-    pkgs.linuxPackages_latest.perf # For flamegraph
+    pkgs.perf # For flamegraph
   ];
 
   languages.rust = {

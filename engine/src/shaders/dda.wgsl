@@ -2,8 +2,9 @@ const WG_SIZE = 8;
 const SENTINEL = -314159.0;
 const OBJECTS = 1;
 
+// [OctNorm1, OctNorm2, Time, bitcasted BlockType] 
 @group(0) @binding(0)
-var output_tex: texture_storage_2d<rgba8unorm, write>;
+var output_tex: texture_storage_2d<rgba16float, write>;
 
 struct Camera {
   pos: vec3<f32>,
@@ -18,10 +19,12 @@ struct VoxelNode { children: array<u32, 8> }
 @group(0) @binding(2)
 var<storage, read> voxels: array<VoxelNode>;
 
+// I only need linear transform, just store that 3x3
 struct VoxelObject {
   pos: vec3<f32>,
   min_cell: vec3<u32>,
   extent: vec3<u32>,
+  transform: mat4x4<f32>,
   inv_transform: mat4x4<f32>,
   head: u32,
   height: u32,
@@ -39,14 +42,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   let world_dir = cam.rot * vec3(uv * vec2(cam.tan_fov), 1.0);
   let ray = march_objects(world_dir);
-  var result = vec4(0.0);
-  if ray.voxel[0] == 0 {
-    result = vec4(0.25) / f32(ray.steps);
-  } else {
-    let step_color = 1.0 / f32(ray.steps);
-    let normal_color = 0.5 + vec3<f32>(ray.normal) * vec3(-0.2, 0.3, 0.4);
-    result = vec4(step_color * normal_color, 1);
-  }
+
+  let oct_normal = oct_encode(ray.global_normal);
+  let result = vec4(oct_normal.x, oct_normal.y, ray.t, bitcast<f32>(ray.voxel[0]));
 
   textureStore(output_tex, vec2<i32>(gid.xy), result);
 }
@@ -59,10 +57,10 @@ struct Ray {
   pos: Position,
   dir: vec3<f32>,
   inv_dir: vec3<f32>,
-  normal: vec3<bool>,
+  local_normal: vec3<bool>,
+  global_normal: vec3<f32>,
   voxel: vec2<u32>,
   t: f32,
-  steps: u32,
   alive: bool,
 }
 fn move_ray(ray: ptr<function, Ray>, timestep: f32) {
@@ -78,23 +76,28 @@ fn march_objects(world_dir: vec3<f32>) -> Ray {
   var rays: array<Ray, OBJECTS>;
   let ONE = 1.0; let INF = ONE / 0.0;
   var best_ray = Ray(); best_ray.t = INF;
-  var steps = 1u;
+  var ray_obj_idx = 0u;
 
   for (var idx = 0u; idx < OBJECTS; idx += 1) {
     var ray = new_ray(world_dir, idx);
     if !ray.alive { continue; }
+    ray_obj_idx = idx;
     ray.voxel = vox_read(objects[idx].head, objects[idx].height, ray.pos.cell);
     while ray.voxel[0] == 0 {
       dda_step(&ray);
       // If we've stepped outside of the object bounds
       // We bitcast pos.cell to u32s to avoid < 0 branching via underflow
       if !all(bitcast<vec3<u32>>(ray.pos.cell) - objects[idx].min_cell < objects[idx].extent) { break; }
-      ray.voxel = vox_read( objects[idx].head, objects[idx].height, ray.pos.cell); // Sample current position
+      ray.voxel = vox_read(objects[idx].head, objects[idx].height, ray.pos.cell); // Sample current position
     }
     if ray.t < best_ray.t && ray.voxel[0] != 0 { best_ray = ray; } 
-    steps += ray.steps;
   }
-  best_ray.steps = steps;
+
+  let linear = mat3x3<f32>(objects[ray_obj_idx].transform[0].xyz,
+                           objects[ray_obj_idx].transform[1].xyz,
+                           objects[ray_obj_idx].transform[2].xyz);
+  let local_float_normal = vec3<f32>(best_ray.local_normal) * sign(best_ray.inv_dir) * vec3(1.0, -1.0, 1.0);
+  best_ray.global_normal = normalize(linear * local_float_normal);
   return best_ray;
 }
 
@@ -106,13 +109,12 @@ fn new_ray(world_dir: vec3<f32>, obj: u32) -> Ray {
   ray.inv_dir = 1.0 / ray.dir;
   let intersection = aabb_intersect(pos_f32, ray.inv_dir, objects[obj].min_cell, objects[obj].extent);
   ray.alive = intersection.t != SENTINEL;
-  ray.normal = intersection.normal;
+  ray.local_normal = intersection.normal;
   move_ray(&ray, max(0.0, intersection.t));
   return ray;
 }
 
 fn dda_step(ray: ptr<function, Ray>) {
-  (*ray).steps += 1;
   // Sparse marching
   let neg_wall = (*ray).pos.cell & vec3(~0i << (*ray).voxel[1] );
   let pos_wall = neg_wall + (1i << (*ray).voxel[1] );
@@ -121,7 +123,7 @@ fn dda_step(ray: ptr<function, Ray>) {
   let t_wall = ( vec3<f32>( next_wall - (*ray).pos.cell ) - (*ray).pos.offset ) * (*ray).inv_dir;
   let t_step = min(min(t_wall.x, t_wall.y), t_wall.z);
   move_ray(ray, t_step);
-  (*ray).normal = t_wall == vec3(t_step);
+  (*ray).local_normal = t_wall == vec3(t_step);
 }
 
 fn vox_read(head: u32, height: u32, cell: vec3<i32>) -> vec2<u32> {
@@ -136,6 +138,7 @@ fn vox_read(head: u32, height: u32, cell: vec3<i32>) -> vec2<u32> {
   }
   return vec2<u32>(cur_idx, cur_height);
 }
+
 
 struct Intersection {
   t: f32,
@@ -157,3 +160,17 @@ fn aabb_intersect(ray_origin: vec3<f32>, inv_dir: vec3<f32>, min_cell: vec3<u32>
   return intersection;
 }
 
+
+fn oct_wrap(n: vec2<f32>) -> vec2<f32> {
+  // Fold the lower hemisphere
+  return (1.0 - abs(n.yx)) * vec2<f32>(select(vec2(-1.0), vec2(1.0), n >= vec2(0.0)));
+}
+
+fn oct_encode(n: vec3<f32>) -> vec2<f32> {
+  // Project to octahedron
+  let p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+  // Fold negative z
+  let p2 = select(p, oct_wrap(p), n.z >= 0.0);
+  // Return into [0,1]
+  return p2 * 0.5 + 0.5;
+}

@@ -6,9 +6,11 @@ use crate::objects::GameData;
 use crate::wgpu_buffers::*;
 
 const SCALE: f32 = 1.0 / 1.0; // ./shaders/upscale.wgsl
-const WORKGROUP: u32 = 8; // ./shaders/dda.wgsl
+const WORKGROUP: u32 = 8;     // ./shaders/dda.wgsl
+const OBJECT_COUNT: u64 = 1;  // ./shaders/dda.wgsl
 
-
+// We can def turn these modules into a trait
+// I'm seconding this, turn these into a trait when I get back!!!
 struct DdaModule {
   voxel_buffer: wgpu::Buffer,
   cam_buffer: wgpu::Buffer,
@@ -23,13 +25,14 @@ impl DdaModule {
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       label: Some("DDA BGL"),
       entries: &[
-        // Texture
+        // (OctNorm1, OctNorm2, Time, BlockType)
+        // Output buffer
         wgpu::BindGroupLayoutEntry {
           binding: 0,
           visibility: wgpu::ShaderStages::COMPUTE,
           ty: wgpu::BindingType::StorageTexture {
             access: wgpu::StorageTextureAccess::WriteOnly,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba16Float,
             view_dimension: wgpu::TextureViewDimension::D2,
           },
           count: None,
@@ -56,6 +59,7 @@ impl DdaModule {
           },
           count: None,
         },
+        // Object Buffer
         wgpu::BindGroupLayoutEntry {
           binding: 3,
           visibility: wgpu::ShaderStages::COMPUTE,
@@ -80,10 +84,9 @@ impl DdaModule {
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false
     });
-    let count = 4;
     let objects_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("Objects Buffer"),
-      size: std::mem::size_of::<ObjData>() as u64 * count,
+      size: std::mem::size_of::<ObjData>() as u64 * OBJECT_COUNT,
       usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
@@ -111,11 +114,11 @@ impl DdaModule {
     }
   }
 
-  fn set_output_texture(&mut self, device: &wgpu::Device, output: &wgpu::TextureView) {
+  fn set_textures(&mut self, device: &wgpu::Device, output_view: &wgpu::TextureView) {
     self.bind_group = Some( device.create_bind_group(&wgpu::BindGroupDescriptor {
       layout: &self.bind_group_layout,
       entries: &[
-        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(output), },
+        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(output_view), },
         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Buffer(self.cam_buffer.as_entire_buffer_binding()), },
         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(self.voxel_buffer.as_entire_buffer_binding()), },
         wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Buffer(self.objects_buffer.as_entire_buffer_binding()), },
@@ -187,12 +190,74 @@ impl UpscaleModule {
     Self { bind_group_layout, pipeline, bind_group: None}
   }
 
-  fn set_input_texture(&mut self, device: &wgpu::Device, input: &wgpu::TextureView, sampler: &wgpu::Sampler) {
+  fn set_textures(&mut self, device: &wgpu::Device, input: &wgpu::TextureView, sampler: &wgpu::Sampler) {
     self.bind_group = Some( device.create_bind_group(&wgpu::BindGroupDescriptor {
       layout: &self.bind_group_layout,
       entries: &[
         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&input) },
         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+      ],
+      label: Some("Upscale BindGroup"),
+    }) );
+  }
+}
+
+struct LightingModule {
+  bind_group_layout: wgpu::BindGroupLayout,
+  pipeline: wgpu::ComputePipeline,
+  // We can't create the bind group without an associated texture
+  bind_group: Option<wgpu::BindGroup>
+}
+impl LightingModule {
+  fn create(device: &wgpu::Device) -> Self {
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+      label: Some("Lighting BGL"),
+      entries: &[
+        // Input Texture
+        wgpu::BindGroupLayoutEntry {
+          binding: 0,
+          visibility: wgpu::ShaderStages::COMPUTE,
+          ty: wgpu::BindingType::Texture {
+            multisampled: false,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+          },
+          count: None,
+        },
+        // Output Texture
+        wgpu::BindGroupLayoutEntry {
+          binding: 1,
+          visibility: wgpu::ShaderStages::COMPUTE,
+          ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: wgpu::TextureFormat::Rgba16Float,
+            view_dimension: wgpu::TextureViewDimension::D2,
+          },
+          count: None,
+        },
+      ],
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+      layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Lighting Layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[]
+      })),
+      cache: None,
+      compilation_options: wgpu::PipelineCompilationOptions::default(),
+      module: &device.create_shader_module(wgpu::include_wgsl!("shaders/lighting.wgsl")),
+      entry_point: Some("main"),
+      label: Some("Lighting Pipeline")
+    });
+    Self { bind_group_layout, pipeline, bind_group: None}
+  }
+
+  fn set_textures(&mut self, device: &wgpu::Device, input: &wgpu::TextureView, output: &wgpu::TextureView) {
+    self.bind_group = Some( device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &self.bind_group_layout,
+      entries: &[
+        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&input) },
+        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&output) },
       ],
       label: Some("Upscale BindGroup"),
     }) );
@@ -206,6 +271,7 @@ pub struct WgpuCtx<'window> {
   queue: wgpu::Queue,
   sampler: wgpu::Sampler,
   dda_compute: DdaModule,
+  lighting_compute: LightingModule,
   upscale_render: UpscaleModule,
 }
 impl<'window> WgpuCtx<'window> {
@@ -223,6 +289,7 @@ impl<'window> WgpuCtx<'window> {
     surface.configure(&device, &surface_config);
 
     let dda_compute = DdaModule::create(&device, 64_000_000);
+    let lighting_compute = LightingModule::create(&device);
     let upscale_render = UpscaleModule::create(&device, &adapter, &surface);
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
     let mut ctx = WgpuCtx {
@@ -232,37 +299,53 @@ impl<'window> WgpuCtx<'window> {
       queue,
       sampler,
       dda_compute,
+      lighting_compute,
       upscale_render,
     };
-    ctx.gen_dda_texture();
+    ctx.gen_textures();
     ctx
   }
 
-  fn gen_dda_texture(&mut self) {
+  fn gen_textures(&mut self) {
+    let size = wgpu::Extent3d {
+      width: (self.surface_config.width as f32 * SCALE) as u32,
+      height: (self.surface_config.height as f32 * SCALE) as u32,
+      depth_or_array_layers: 1
+    };
+
+    // Put these into 
     let dda_output = self.device.create_texture(&wgpu::TextureDescriptor {
-      label: Some("Dda Texture"),
-      size: wgpu::Extent3d {
-        width: (self.surface_config.width as f32 * SCALE) as u32,
-        height: (self.surface_config.height as f32 * SCALE) as u32,
-        depth_or_array_layers: 1
-      },
+      label: Some("Dda Output Texture"),
+      size,
       mip_level_count: 1,
       sample_count: 1,
       dimension: wgpu::TextureDimension::D2,
-      format: wgpu::TextureFormat::Rgba8Unorm,
+      format: wgpu::TextureFormat::Rgba16Float,
+      usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+      view_formats: &[],
+    }).create_view(&Default::default());
+    let lighting_output = self.device.create_texture(&wgpu::TextureDescriptor {
+      label: Some("Lighting Output Texture"),
+      size,
+      mip_level_count: 1,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: wgpu::TextureFormat::Rgba16Float,
       usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
       view_formats: &[],
     }).create_view(&Default::default());
 
-    self.dda_compute.set_output_texture(&self.device, &dda_output);
-    self.upscale_render.set_input_texture(&self.device, &dda_output, &self.sampler);
+
+    self.dda_compute.set_textures(&self.device, &dda_output);
+    self.lighting_compute.set_textures(&self.device, &dda_output, &lighting_output);
+    self.upscale_render.set_textures(&self.device, &lighting_output, &self.sampler);
   }
 
   pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
     self.surface_config.width = new_size.width;
     self.surface_config.height = new_size.height;
     self.surface.configure(&self.device, &self.surface_config);
-    self.gen_dda_texture();
+    self.gen_textures();
   }
 
   /// Writes the raw memory of the graph into a GPU buffer
@@ -296,6 +379,15 @@ impl<'window> WgpuCtx<'window> {
     compute_pass.dispatch_workgroups(scaled_size.x, scaled_size.y, 1);
   }
   
+  fn lighting(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    let mut compute_pass = encoder.begin_compute_pass(&Default::default());
+    compute_pass.set_pipeline(&self.lighting_compute.pipeline);
+    compute_pass.set_bind_group(0, &self.lighting_compute.bind_group, &[]);
+    let size = Vec2::new(self.surface_config.width as f32, self.surface_config.height as f32);
+    let scaled_size = ((size * SCALE).as_uvec2() + WORKGROUP - 1) / WORKGROUP; // Round up with int math
+    compute_pass.dispatch_workgroups(scaled_size.x, scaled_size.y, 1);
+  }
+
   fn upscale(&mut self, frame_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
     let mut upscale_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
       label: Some("Render Pass"),
@@ -322,6 +414,7 @@ impl<'window> WgpuCtx<'window> {
     let mut encoder = self.device.create_command_encoder(&Default::default());
 
     self.dda(game_data, &mut encoder);
+    self.lighting(&mut encoder);
     self.upscale(&view, &mut encoder);
 
     self.queue.submit(Some(encoder.finish()));
