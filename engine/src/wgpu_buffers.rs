@@ -71,7 +71,7 @@ pub struct CamData {
   pad4: f32,
 
   aspect_ratio: f32,
-  tan_fov: f32,
+  pub tan_fov: f32,
   pad5: [f32; 2],
 }
 impl CamData {

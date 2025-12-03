@@ -2,7 +2,7 @@ const WG_SIZE = 8;
 const SENTINEL = -314159.0;
 const OBJECTS = 1;
 
-// [OctNorm1, OctNorm2, Time, bitcasted BlockType] 
+// [OctNorm1, OctNorm2, Z, bitcasted BlockType] 
 @group(0) @binding(0)
 var output_tex: texture_storage_2d<rgba16float, write>;
 
@@ -40,11 +40,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Transform from <0,1> to <-1, 1>, then scale by aspect_ratio for proper dimensioning
   let uv = ((vec2<f32>(gid.xy) + 0.5) / vec2<f32>(resolution.xy) - 0.5) * 2 * vec2(cam.aspect_ratio, 1.0);
 
-  let world_dir = cam.rot * vec3(uv * vec2(cam.tan_fov), 1.0);
+  let cam_dir = vec3(uv * vec2(cam.tan_fov), 1.0);
+  let world_dir = cam.rot * cam_dir;
   let ray = march_objects(world_dir);
 
   let oct_normal = oct_encode(ray.global_normal);
-  let result = vec4(oct_normal.x, oct_normal.y, ray.t, bitcast<f32>(ray.voxel[0]));
+  let result = vec4(oct_normal.x, oct_normal.y, (ray.t * cam_dir).z, f32(ray.voxel[0]));
 
   textureStore(output_tex, vec2<i32>(gid.xy), result);
 }
