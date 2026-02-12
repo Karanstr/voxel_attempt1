@@ -5,7 +5,3 @@ Cargo.lock
 # Stuff from profiling
 flamegraph.svg
 perf.*
-
-# Devenv metadata used for rust environment
-devenv.lock
-.devenv*
